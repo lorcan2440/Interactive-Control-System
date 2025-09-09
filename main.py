@@ -11,7 +11,10 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt6.QtCore import Qt, QTimer
 
 
-plt.style.use(r'C:\LibsAndApps\Python config files\proplot_style.mplstyle')
+try:
+    plt.style.use(r'C:\LibAndApps\Python config files\proplot_style.mplstyle')
+except OSError:
+    plt.style.use('ggplot')
 
 
 class ControlSimulator(QWidget):
