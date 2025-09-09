@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, QTimer
 
 
 try:
-    plt.style.use(r'C:\LibAndApps\Python config files\proplot_style.mplstyle')
+    plt.style.use(r'C:\LibsAndApps\Python config files\proplot_style.mplstyle')
 except OSError:
     plt.style.use('ggplot')
 
