@@ -36,16 +36,16 @@ class GUI:
             self.simulator.t_data, self.simulator.y_measured_data, 'kx', markersize=3, label="$ y = x_2 + w_2 $")
         self.simulator.ref_line, = self.simulator.ax1.plot(self.simulator.t_data, [self.simulator.setpoint], 'r--', label="Setpoint")
         self.simulator.ax1.legend(loc="upper right")
-        self.simulator.ax1.set_xlim(0, 5)
-        self.simulator.ax1.set_ylim(-2, 2)
+        self.simulator.ax1.set_xlim(0, self.simulator.graph_window)
+        self.simulator.ax1.set_ylim(self.simulator.y_lim_minus, self.simulator.y_lim_plus)
 
         # Control input plot
         self.simulator.ax2.set_xlabel("Time")
         self.simulator.ax2.set_ylabel("Input")
         self.simulator.line_u, = self.simulator.ax2.plot(self.simulator.t_data, self.simulator.u_data, 'g-', label="$ u $")
         self.simulator.ax2.legend(loc="upper right")
-        self.simulator.ax2.set_xlim(0, 5)
-        self.simulator.ax2.set_ylim(-5, 5)
+        self.simulator.ax2.set_xlim(0, self.simulator.graph_window)
+        self.simulator.ax2.set_ylim(self.simulator.u_lim_minus, self.simulator.u_lim_plus)
 
         #### Simulation Settings ####
 
@@ -53,13 +53,27 @@ class GUI:
 
         # controller selection radio buttons
         controller_select_box = QGroupBox("Controller Selection")
-        controller_select_layout = QHBoxLayout()
+        controller_select_layout = QGridLayout()  # QHBoxLayout()
         
         self.simulator.manual_radio = QRadioButton("Manual Control")
-        self.simulator.bangbang_radio = QRadioButton("Bang-Bang Control")
         self.simulator.openloop_radio = QRadioButton("Open Loop Control")
+        self.simulator.bangbang_radio = QRadioButton("Bang-Bang Control")
         self.simulator.pid_radio = QRadioButton("PID Control")
+        self.simulator.leadlag_radio = QRadioButton("Lead-Lag Compensator")
+        self.simulator.smc_radio = QRadioButton("Sliding Mode Control")
+        self.simulator.mpc_radio = QRadioButton("Model Predictive Control")
         self.simulator.h2_radio = QRadioButton("H2 Optimal Control (LQG)")
+        self.simulator.hinf_radio = QRadioButton("H∞ Optimal Control")
+        self.simulator.neural_radio = QRadioButton("Neural Control")
+        self.simulator.rl_radio = QRadioButton("Reinforcement Learning (DDPG)")
+
+        # TODO: implement these controllers!
+        self.simulator.leadlag_radio.setDisabled(True)
+        self.simulator.smc_radio.setDisabled(True)
+        self.simulator.mpc_radio.setDisabled(True)
+        self.simulator.hinf_radio.setDisabled(True)
+        self.simulator.neural_radio.setDisabled(True)
+        self.simulator.rl_radio.setDisabled(True)
 
         self.simulator.manual_radio.toggled.connect(self.simulator.on_controller_changed)
         self.simulator.openloop_radio.toggled.connect(self.simulator.on_controller_changed)
@@ -67,11 +81,17 @@ class GUI:
         self.simulator.pid_radio.toggled.connect(self.simulator.on_controller_changed)
         self.simulator.h2_radio.toggled.connect(self.simulator.on_controller_changed)
         
-        controller_select_layout.addWidget(self.simulator.manual_radio)
-        controller_select_layout.addWidget(self.simulator.openloop_radio)
-        controller_select_layout.addWidget(self.simulator.bangbang_radio)
-        controller_select_layout.addWidget(self.simulator.pid_radio)
-        controller_select_layout.addWidget(self.simulator.h2_radio)
+        controller_select_layout.addWidget(self.simulator.manual_radio, 0, 0)
+        controller_select_layout.addWidget(self.simulator.openloop_radio, 0, 1)
+        controller_select_layout.addWidget(self.simulator.bangbang_radio, 0, 2)
+        controller_select_layout.addWidget(self.simulator.pid_radio, 0, 3)
+        controller_select_layout.addWidget(self.simulator.leadlag_radio, 0, 4)
+        controller_select_layout.addWidget(self.simulator.smc_radio, 1, 0)
+        controller_select_layout.addWidget(self.simulator.mpc_radio, 1, 1)
+        controller_select_layout.addWidget(self.simulator.h2_radio, 1, 2)
+        controller_select_layout.addWidget(self.simulator.hinf_radio, 1, 3)
+        controller_select_layout.addWidget(self.simulator.neural_radio, 1, 4)
+        controller_select_layout.addWidget(self.simulator.rl_radio, 1, 5)
 
         controller_select_box.setLayout(controller_select_layout)
         control_layout.addWidget(controller_select_box)
@@ -139,7 +159,7 @@ class GUI:
         control_layout.addWidget(self.simulator.manual_box)
 
         ### Open Loop Controls ###
-        # None
+        # (No settings)
 
         ### Bang Bang Controls ###
         self.simulator.bangbang_box = QGroupBox("Bang Bang Controller Parameters")
@@ -195,18 +215,18 @@ class GUI:
         h2_layout = QGridLayout()
         
         # C1_1
-        self.simulator.h2_C1_1_slider = self.simulator.make_slider_from_cfg('h2_C1_1')
-        self.simulator.h2_C1_1_slider.valueChanged.connect(self.simulator.update_h2_C1_1)
-        self.simulator.h2_C1_1_label = QLabel(f"C1_1 (performance gain of x_1): {self.simulator.h2_C1_1:.2f}")
-        h2_layout.addWidget(self.simulator.h2_C1_1_slider, 0, 0)
-        h2_layout.addWidget(self.simulator.h2_C1_1_label, 1, 0)
+        self.simulator.C1_1_slider = self.simulator.make_slider_from_cfg('C1_1')
+        self.simulator.C1_1_slider.valueChanged.connect(self.simulator.update_C1_1)
+        self.simulator.C1_1_label = QLabel(f"C1_1 (performance gain of x_1): {self.simulator.C1_1:.2f}")
+        h2_layout.addWidget(self.simulator.C1_1_slider, 0, 0)
+        h2_layout.addWidget(self.simulator.C1_1_label, 1, 0)
         
         # C1_2
-        self.simulator.h2_C1_2_slider = self.simulator.make_slider_from_cfg('h2_C1_2')
-        self.simulator.h2_C1_2_slider.valueChanged.connect(self.simulator.update_h2_C1_2)
-        self.simulator.h2_C1_2_label = QLabel(f"C1_2 (performance gain of x_2): {self.simulator.h2_C1_2:.2f}")
-        h2_layout.addWidget(self.simulator.h2_C1_2_slider, 0, 1)
-        h2_layout.addWidget(self.simulator.h2_C1_2_label, 1, 1)
+        self.simulator.C1_2_slider = self.simulator.make_slider_from_cfg('C1_2')
+        self.simulator.C1_2_slider.valueChanged.connect(self.simulator.update_C1_2)
+        self.simulator.C1_2_label = QLabel(f"C1_2 (performance gain of x_2): {self.simulator.C1_2:.2f}")
+        h2_layout.addWidget(self.simulator.C1_2_slider, 0, 1)
+        h2_layout.addWidget(self.simulator.C1_2_label, 1, 1)
         
         self.simulator.h2_box.setLayout(h2_layout)
         control_layout.addWidget(self.simulator.h2_box)

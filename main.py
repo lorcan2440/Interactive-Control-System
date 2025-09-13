@@ -54,6 +54,12 @@ class Simulation(QWidget):
         self.solver_dt = 0.001      # dynamics update every solver_dt time units
         self.graph_window = 5.0     # time units shown on graph
 
+        # graph range
+        self.y_lim_minus = -2.0
+        self.y_lim_plus = 2.0
+        self.u_lim_minus = -5.0
+        self.u_lim_plus = 5.0
+
         # default settings (initial values)
         self.w1_stddev = 0.00                           # process noise standard deviation
         self.w2_stddev = 0.00                           # measurement noise standard deviation
@@ -65,16 +71,16 @@ class Simulation(QWidget):
         self.manual_enabled = True if self.controller_type is ControllerType.MANUAL else False
         self.last_u = 0.0
 
-        self.U_plus = 3.0
-        self.U_minus = -3.0
+        self.U_plus = 4.0
+        self.U_minus = -4.0
 
         self.setpoint = 1.0
         self.Kp = 5.0
         self.Ki = 0.0
         self.Kd = 0.0
 
-        self.h2_C1_1 = 0.0
-        self.h2_C1_2 = 1.0
+        self.C1_1 = 0.0
+        self.C1_2 = 1.0
 
         # sliders: set min, max and step here for each slider.
         self.slider_configs = {
@@ -82,13 +88,13 @@ class Simulation(QWidget):
             'setpoint':  {'min': -1.0, 'max': 1.0,  'step': 0.01,   'init': self.setpoint},
             'w1_stddev': {'min': 0.0,  'max': 5.0,  'step': 0.05,   'init': self.w1_stddev},
             'w2_stddev': {'min': 0.0,  'max': 1.0,  'step': 0.01,   'init': self.w2_stddev},
-            'U_plus':    {'min': -5.0, 'max': 5.0,  'step': 0.1,    'init': self.U_plus},
-            'U_minus':   {'min': -5.0, 'max': 5.0,  'step': 0.1,    'init': self.U_minus},
+            'U_plus':    {'min': 0.0,  'max': 5.0,  'step': 0.1,    'init': self.U_plus},
+            'U_minus':   {'min': -5.0, 'max': 0.0,  'step': 0.1,    'init': self.U_minus},
             'Kp':        {'min': 0.0,  'max': 20.0, 'step': 0.05,   'init': self.Kp},
             'Ki':        {'min': 0.0,  'max': 20.0, 'step': 0.05,   'init': self.Ki},
             'Kd':        {'min': 0.0,  'max': 50.0, 'step': 0.05,   'init': self.Kd},
-            'h2_C1_1':   {'min': -3.0, 'max': 3.0,  'step': 0.01,   'init': self.h2_C1_1},
-            'h2_C1_2':   {'min': -3.0, 'max': 3.0,  'step': 0.01,   'init': self.h2_C1_2},
+            'C1_1':      {'min': -3.0, 'max': 3.0,  'step': 0.01,   'init': self.C1_1},
+            'C1_2':      {'min': -3.0, 'max': 3.0,  'step': 0.01,   'init': self.C1_2},
         }
         
         # attach plant dynamic model that is being controlled
@@ -168,13 +174,21 @@ class Simulation(QWidget):
         self.line_u.set_ydata(self.u_data)
         self.line_u.set_label('$ u = $' + f' {self.last_u:.3f}')
 
-        # adjust autoscaling
-        self.ax1.legend(loc='upper right')
+        # refresh legend and y-axis scale
+        self.ax1.legend(loc='lower left')
+        self.ax2.legend(loc='lower left')
+
+        self.ax1.set_ylim(min(self.y_lim_minus, min(self.u_data)), max(self.y_lim_plus, max(self.u_data)))
+        self.ax2.set_ylim(min(self.u_lim_minus, min(self.u_data)), max(self.u_lim_plus, max(self.u_data)))
+
+        '''
+        # NOTE: this doesn't seem to work, so just manually set the limits as above
         self.ax1.relim()
         self.ax1.autoscale_view(scaley=True)
-        self.ax2.legend(loc='upper right')
+        self.ax2.legend(loc='lower left')
         self.ax2.relim()
         self.ax2.autoscale_view(scaley=True)
+        '''
 
         self.canvas.draw()
 
@@ -281,15 +295,15 @@ class Simulation(QWidget):
         self.Kd = cfg['min'] + value * cfg['step']
         self.Kd_label.setText(f"Kd: {self.Kd:.4f}")
 
-    def update_h2_C1_1(self, value):
-        cfg = self.slider_configs['h2_C1_1']
-        self.h2_C1_1 = cfg['min'] + value * cfg['step']
-        self.h2_C1_1_label.setText(f"C1_1: {self.h2_C1_1:.2f}")
+    def update_C1_1(self, value):
+        cfg = self.slider_configs['C1_1']
+        self.C1_1 = cfg['min'] + value * cfg['step']
+        self.C1_1_label.setText(f"C1_1: {self.C1_1:.2f}")
 
-    def update_h2_C1_2(self, value):
-        cfg = self.slider_configs['h2_C1_2']
-        self.h2_C1_2 = cfg['min'] + value * cfg['step']
-        self.h2_C1_2_label.setText(f"C1_2: {self.h2_C1_2:.2f}")
+    def update_C1_2(self, value):
+        cfg = self.slider_configs['C1_2']
+        self.C1_2 = cfg['min'] + value * cfg['step']
+        self.C1_2_label.setText(f"C1_2: {self.C1_2:.2f}")
 
     def make_slider_from_cfg(self, key: str, orientation=Qt.Orientation.Horizontal):
         # Helper function to make slider from {min, max, step, init}

@@ -68,10 +68,10 @@ class BangBangController:
         '''
         A bang-bang controller (aka 'on-off controller') only has two possible control inputs:
 
-        - u = U_+, if y_measured < y_setpoint
-        - u = U_-, if y_measured > y_setpoint
+        - u = U_plus,  if y_measured < y_setpoint
+        - u = U_minus, if y_measured > y_setpoint
 
-        where U_+ and U_- are constants and are the parameters of the controller.
+        where U_plus > 0 and U_minus < 0 are constants and are the parameters of the controller.
 
         This type of controller resembles how a thermostat works. It can lead to chattering (rapid changes of u) 
         near the setpoint if there is measurement noise and/or if the plant process dynamics are fast.
@@ -191,7 +191,7 @@ class H2Controller:
         '''
 
         # check if we need to recompute performance output vector (C1 may have changed)
-        current_C1 = (self.simulator.h2_C1_1, self.simulator.h2_C1_2)
+        current_C1 = (self.simulator.C1_1, self.simulator.C1_2)
         
         if not self.h2_gains_computed or self.last_C1 != current_C1:
             
@@ -203,7 +203,7 @@ class H2Controller:
             C2 = np.array([[0, 1]])
 
             # performance output matrix
-            C1 = np.array([[self.simulator.h2_C1_1, self.simulator.h2_C1_2]])
+            C1 = np.array([[self.simulator.C1_1, self.simulator.C1_2]])
 
             # solve algebraic Riccati equations (AREs)
             X = solve_continuous_are(A, B2, C1.T @ C1, np.eye(1))  # CARE (control ARE)
