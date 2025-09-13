@@ -37,7 +37,7 @@ class Simulation(QWidget):
         self.w2_stddev = 0.00                           # measurement noise standard deviation
         self.state_x = np.array([0.0, 0.0])             # initial states: x1, x2
         self.y_measured = self.state_x[1]               # initial measured output
-        self.controller_type = ControllerType.H2        # default controller type
+        self.controller_type = ControllerType.MANUAL    # default controller type
         
         self.manual_u = 0.0
         self.manual_enabled = True if self.controller_type is ControllerType.MANUAL else False
