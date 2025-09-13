@@ -20,11 +20,15 @@ from PySide6.QtCore import Qt, QTimer
 
 1. Clone the repo to your system:
 
-`$ git clone https://github.com/lorcan2440/Interactive-Control-System.git`
+```bash
+git clone https://github.com/lorcan2440/Interactive-Control-System.git
+```
 
 2. Navigate into the project directory:
 
-`$ cd Interactive-Control-System`
+```bash
+cd Interactive-Control-System
+```
 
 (Optional) Create and activate a virtual environment. This helps keep dependencies isolated.
 
@@ -38,11 +42,15 @@ venv\Scripts\activate
 
 3. Make sure you have Python 3 with pip installed, then run:
 
-`pip install -r requirements.txt`
+```bash
+pip install -r requirements.txt
+```
 
 4. Run the application:
 
-`python main.py`
+```bash
+python main.py
+```
 
 ## Future ideas
 
