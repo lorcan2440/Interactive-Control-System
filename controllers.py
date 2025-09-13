@@ -6,6 +6,8 @@ from scipy.linalg import solve_continuous_are
 
 class ControllerType(Enum):
     MANUAL = auto()
+    OPENLOOP = auto()
+    BANGBANG = auto()
     PID = auto()
     H2 = auto()
     
@@ -15,13 +17,13 @@ class ControllerType(Enum):
 
 
 class ManualController:
-    def __init__(self, simulator, model):
+    def __init__(self, simulator, plant):
         '''
         The manual controller allows the user to directly specify the control input.
         No computations are performed; only the slider value is read from the GUI and applied to the plant.
         '''
         self.simulator = simulator
-        self.model = model
+        self.plant = plant
     
     def calc_u(self, _y: float):
         '''
@@ -36,8 +38,61 @@ class ManualController:
         return u
 
 
+class OpenLoopController:
+    def __init__(self, simulator, plant):
+        '''
+        An open-loop controller (aka feedforward controller) is a simple control law whose control input
+        is proportional to the reciprocal of the steady-state gain of the plant.
+        
+        There is no measuring of the output i.e. no feedback, the block diagram is 'open': 
+        the control input depends only on the setpoint.
+        The controller response time is limited by the dynamics of the plant.
+        In the complete absence of disturbances, the steady-state error will be zero.
+        '''
+        self.simulator = simulator
+        self.plant = plant
+
+    def calc_u(self, _y: float):
+        y_sp = self.simulator.setpoint
+
+        # steady state gain of plant in open-loop conditions = G(0)
+        plant_ss_gain = self.plant.k12 / (self.plant.d * (self.plant.d + self.plant.k12 + self.plant.k21))
+
+        u = y_sp / plant_ss_gain
+        self.simulator.last_u = u
+        return u
+
+
+class BangBangController:
+    def __init__(self, simulator, plant):
+        '''
+        A bang-bang controller (aka 'on-off controller') only has two possible control inputs:
+
+        - u = U_+, if y_measured < y_setpoint
+        - u = U_-, if y_measured > y_setpoint
+
+        where U_+ and U_- are constants and are the parameters of the controller.
+
+        This type of controller resembles how a thermostat works. It can lead to chattering (rapid changes of u) 
+        near the setpoint if there is measurement noise and/or if the plant process dynamics are fast.
+        '''
+        self.simulator = simulator
+        self.plant = plant
+
+    def calc_u(self, y: float):
+        if y < self.simulator.setpoint:
+            u = self.simulator.U_plus
+        elif y > self.simulator.setpoint:
+            u = self.simulator.U_minus
+        else:
+            u = 0
+
+        self.simulator.last_u = u
+        return u
+
+
 class PIDController:
-    def __init__(self, simulator, model):
+    def __init__(self, simulator, plant):
         '''
         A PID controller performs three separate operations on the error signal:
 
@@ -59,7 +114,7 @@ class PIDController:
         '''
 
         self.simulator = simulator
-        self.model = model
+        self.plant = plant
 
         self.reset_memory()
 
@@ -92,7 +147,7 @@ class PIDController:
 
 
 class H2Controller:
-    def __init__(self, simulator, model):
+    def __init__(self, simulator, plant):
         '''
         A H2 controller, also known as an LQG controller, is a type of optimal controller. 
         It aims to minimise the total signal energy gain of an input disturbance w 
@@ -125,7 +180,7 @@ class H2Controller:
         '''
 
         self.simulator = simulator
-        self.model = model
+        self.plant = plant
         self.h2_gains_computed = False
         self.last_C1 = None
         self.x_k = np.array([[0.0], [0.0]])  # [x1_hat, x2_hat].T
@@ -141,8 +196,8 @@ class H2Controller:
         if not self.h2_gains_computed or self.last_C1 != current_C1:
             
             # set up state space matrices
-            A = np.array([[-self.model.k12 - self.model.d, self.model.k21], 
-                          [self.model.k12, -self.model.k21 - self.model.d]])
+            A = np.array([[-self.plant.k12 - self.plant.d, self.plant.k21], 
+                          [self.plant.k12, -self.plant.k21 - self.plant.d]])
             B1 = np.array([[0], [1]])
             B2 = np.array([[1], [0]])
             C2 = np.array([[0, 1]])

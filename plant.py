@@ -38,9 +38,14 @@ class PlantModel:
         # generate process noise sample
         w1 = np.random.normal(0, self.simulator.w1_stddev)
 
+        # compute control input using the selected controller type
         match self.simulator.controller_type:
             case ControllerType.MANUAL:
                 u = self.simulator.manual_controller.calc_u(self.simulator.y_measured)
+            case ControllerType.OPENLOOP:
+                u = self.simulator.openloop_controller.calc_u(self.simulator.y_measured)
+            case ControllerType.BANGBANG:
+                u = self.simulator.bangbang_controller.calc_u(self.simulator.y_measured)
             case ControllerType.PID:
                 u = self.simulator.pid_controller.calc_u(self.simulator.y_measured)
             case ControllerType.H2:

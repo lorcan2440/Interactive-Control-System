@@ -55,18 +55,24 @@ class GUI:
         controller_select_box = QGroupBox("Controller Selection")
         controller_select_layout = QHBoxLayout()
         
-        self.simulator.manual_radio = QRadioButton("Manual Controller")
+        self.simulator.manual_radio = QRadioButton("Manual Control")
+        self.simulator.bangbang_radio = QRadioButton("Bang-Bang Control")
+        self.simulator.openloop_radio = QRadioButton("Open Loop Control")
+        self.simulator.pid_radio = QRadioButton("PID Control")
+        self.simulator.h2_radio = QRadioButton("H2 Optimal Control (LQG)")
+
         self.simulator.manual_radio.toggled.connect(self.simulator.on_controller_changed)
-        
-        self.simulator.pid_radio = QRadioButton("PID Controller")
+        self.simulator.openloop_radio.toggled.connect(self.simulator.on_controller_changed)
+        self.simulator.bangbang_radio.toggled.connect(self.simulator.on_controller_changed)
         self.simulator.pid_radio.toggled.connect(self.simulator.on_controller_changed)
-        
-        self.simulator.h2_radio = QRadioButton("H2 Controller")
         self.simulator.h2_radio.toggled.connect(self.simulator.on_controller_changed)
         
         controller_select_layout.addWidget(self.simulator.manual_radio)
+        controller_select_layout.addWidget(self.simulator.openloop_radio)
+        controller_select_layout.addWidget(self.simulator.bangbang_radio)
         controller_select_layout.addWidget(self.simulator.pid_radio)
         controller_select_layout.addWidget(self.simulator.h2_radio)
+
         controller_select_box.setLayout(controller_select_layout)
         control_layout.addWidget(controller_select_box)
 
@@ -74,7 +80,7 @@ class GUI:
         setpoint_noise_layout = QHBoxLayout()
         
         # setpoint control (left side)
-        setpoint_box = QGroupBox("Setpoint Control")
+        setpoint_box = QGroupBox("Setpoint (reference)")
         setpoint_layout = QVBoxLayout()
 
         self.simulator.setpoint_slider = self.simulator.make_slider_from_cfg('setpoint')
@@ -87,7 +93,7 @@ class GUI:
         setpoint_noise_layout.addWidget(setpoint_box)
 
         # noise control box (right side)
-        noise_box = QGroupBox("Noise Parameters")
+        noise_box = QGroupBox("Disturbances")
         noise_layout = QGridLayout()
         
         # w1_stddev (process noise)
@@ -131,6 +137,30 @@ class GUI:
         
         self.simulator.manual_box.setLayout(manual_layout)
         control_layout.addWidget(self.simulator.manual_box)
+
+        ### Open Loop Controls ###
+        # None
+
+        ### Bang Bang Controls ###
+        self.simulator.bangbang_box = QGroupBox("Bang Bang Controller Parameters")
+        bangbang_layout = QGridLayout()
+
+        # U_minus
+        self.simulator.U_minus_slider = self.simulator.make_slider_from_cfg('U_minus')
+        self.simulator.U_minus_slider.valueChanged.connect(self.simulator.update_U_minus)
+        self.simulator.U_minus_label = QLabel(f"U_minus: {self.simulator.U_minus:.2f}")
+        bangbang_layout.addWidget(self.simulator.U_minus_slider, 0, 0)
+        bangbang_layout.addWidget(self.simulator.U_minus_label, 1, 0)
+    
+        # U_plus
+        self.simulator.U_plus_slider = self.simulator.make_slider_from_cfg('U_plus')
+        self.simulator.U_plus_slider.valueChanged.connect(self.simulator.update_U_plus)
+        self.simulator.U_plus_label = QLabel(f"U_plus: {self.simulator.U_plus:.2f}")
+        bangbang_layout.addWidget(self.simulator.U_plus_slider, 0, 1)
+        bangbang_layout.addWidget(self.simulator.U_plus_label, 1, 1)
+
+        self.simulator.bangbang_box.setLayout(bangbang_layout)
+        control_layout.addWidget(self.simulator.bangbang_box)
 
         ### PID Controls ###
         self.simulator.pid_box = QGroupBox("PID Controller Parameters")
@@ -180,17 +210,21 @@ class GUI:
         
         self.simulator.h2_box.setLayout(h2_layout)
         control_layout.addWidget(self.simulator.h2_box)
-        
+
+        ### Set starting object states
+
         self.simulator.manual_box.setVisible(True)  # the manual box is shown first, others hidden
         self.simulator.h2_box.setVisible(False)
         self.simulator.pid_box.setVisible(False)
-
-        ### Set initial states
 
         # set controller radio button type
         match self.simulator.controller_type:
             case ControllerType.MANUAL:
                 self.simulator.manual_radio.setChecked(True)
+            case ControllerType.OPENLOOP:
+                self.simulator.openloop_radio.setChecked(True)
+            case ControllerType.BANGBANG:
+                self.simulator.bangbang_radio.setChecked(True)
             case ControllerType.PID:
                 self.simulator.pid_radio.setChecked(True)
             case ControllerType.H2:

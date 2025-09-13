@@ -9,7 +9,8 @@ from PyQt6.QtWidgets import QApplication, QWidget, QSlider
 from PyQt6.QtCore import Qt, QTimer
 
 # locals
-from controllers import ControllerType, ManualController, PIDController, H2Controller
+from controllers import (ControllerType, ManualController, OpenLoopController, BangBangController, 
+                         PIDController, H2Controller)
 from plant import PlantModel
 from gui import GUI
 
@@ -64,6 +65,9 @@ class Simulation(QWidget):
         self.manual_enabled = True if self.controller_type is ControllerType.MANUAL else False
         self.last_u = 0.0
 
+        self.U_plus = 3.0
+        self.U_minus = -3.0
+
         self.setpoint = 1.0
         self.Kp = 5.0
         self.Ki = 0.0
@@ -76,8 +80,10 @@ class Simulation(QWidget):
         self.slider_configs = {
             'manual_u':  {'min': -5.0, 'max': 5.0,  'step': 0.1,    'init': self.manual_u},
             'setpoint':  {'min': -1.0, 'max': 1.0,  'step': 0.01,   'init': self.setpoint},
-            'w1_stddev': {'min': 0.0,  'max': 1.0,  'step': 0.01,   'init': self.w1_stddev},
+            'w1_stddev': {'min': 0.0,  'max': 5.0,  'step': 0.05,   'init': self.w1_stddev},
             'w2_stddev': {'min': 0.0,  'max': 1.0,  'step': 0.01,   'init': self.w2_stddev},
+            'U_plus':    {'min': -5.0, 'max': 5.0,  'step': 0.1,    'init': self.U_plus},
+            'U_minus':   {'min': -5.0, 'max': 5.0,  'step': 0.1,    'init': self.U_minus},
             'Kp':        {'min': 0.0,  'max': 20.0, 'step': 0.05,   'init': self.Kp},
             'Ki':        {'min': 0.0,  'max': 20.0, 'step': 0.05,   'init': self.Ki},
             'Kd':        {'min': 0.0,  'max': 50.0, 'step': 0.05,   'init': self.Kd},
@@ -90,6 +96,8 @@ class Simulation(QWidget):
 
         # attach controller definitions
         self.manual_controller = ManualController(self, self.plant)
+        self.openloop_controller = OpenLoopController(self, self.plant)
+        self.bangbang_controller = BangBangController(self, self.plant)
         self.pid_controller = PIDController(self, self.plant)
         self.h2_controller = H2Controller(self, self.plant)
         
@@ -168,8 +176,6 @@ class Simulation(QWidget):
         self.ax2.relim()
         self.ax2.autoscale_view(scaley=True)
 
-        # 1.0008259821594614 after 40 seconds
-
         self.canvas.draw()
 
     def on_controller_changed(self):
@@ -179,12 +185,28 @@ class Simulation(QWidget):
         if self.manual_radio.isChecked():
             self.controller_type = ControllerType.MANUAL
             self.manual_box.setVisible(True)
+            self.bangbang_box.setVisible(False)
+            self.pid_box.setVisible(False)
+            self.h2_box.setVisible(False)
+
+        elif self.openloop_radio.isChecked():
+            self.controller_type = ControllerType.OPENLOOP
+            self.manual_box.setVisible(False)
+            self.bangbang_box.setVisible(False)
+            self.pid_box.setVisible(False)
+            self.h2_box.setVisible(False)
+
+        elif self.bangbang_radio.isChecked():
+            self.controller_type = ControllerType.BANGBANG
+            self.manual_box.setVisible(False)
+            self.bangbang_box.setVisible(True)
             self.pid_box.setVisible(False)
             self.h2_box.setVisible(False)
 
         elif self.pid_radio.isChecked():
             self.controller_type = ControllerType.PID
             self.manual_box.setVisible(False)
+            self.bangbang_box.setVisible(False)
             self.pid_box.setVisible(True)
             self.h2_box.setVisible(False)
             self.pid_controller.reset_memory()  # reset PID integral/last error when changing to PID
@@ -192,6 +214,7 @@ class Simulation(QWidget):
         elif self.h2_radio.isChecked():
             self.controller_type = ControllerType.H2
             self.manual_box.setVisible(False)
+            self.bangbang_box.setVisible(False)
             self.pid_box.setVisible(False)
             self.h2_box.setVisible(True)
     
@@ -232,6 +255,16 @@ class Simulation(QWidget):
             self.manual_label.setText(f"Manual Control u: {self.manual_u:.3f}")
         else:
             self.manual_label.setText(f"Manual Control u: {self.manual_u:.3f} (Disabled)")
+
+    def update_U_minus(self, value):
+        cfg = self.slider_configs['U_minus']
+        self.U_minus = cfg['min'] + value * cfg['step']
+        self.U_minus_label.setText(f"U_minus: {self.U_minus:.2f}")
+
+    def update_U_plus(self, value):
+        cfg = self.slider_configs['U_plus']
+        self.U_plus = cfg['min'] + value * cfg['step']
+        self.U_plus_label.setText(f"U_plus: {self.U_plus:.2f}")
 
     def update_Kp(self, value):
         cfg = self.slider_configs['Kp']
