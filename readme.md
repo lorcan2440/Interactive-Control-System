@@ -16,6 +16,34 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
 from PySide6.QtCore import Qt, QTimer
 ```
 
+## How to run
+
+1. Clone the repo to your system:
+
+`$ git clone https://github.com/lorcan2440/Interactive-Control-System.git`
+
+2. Navigate into the project directory:
+
+`$ cd Interactive-Control-System`
+
+(Optional) Create and activate a virtual environment. This helps keep dependencies isolated.
+
+```bash
+python -m venv venv
+# if on Linux / macOS:
+source venv/bin/activate
+# in on Windows:
+venv\Scripts\activate
+```
+
+3. Make sure you have Python 3 with pip installed, then run:
+
+`pip install -r requirements.txt`
+
+4. Run the application:
+
+`python main.py`
+
 ## Future ideas
 
 - [ ] Plot the error signal e instead of the output y in the top subplot.
