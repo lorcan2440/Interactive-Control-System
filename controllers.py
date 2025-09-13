@@ -16,6 +16,10 @@ class ControllerType(Enum):
 
 class ManualController:
     def __init__(self, simulator, model):
+        '''
+        The manual controller allows the user to directly specify the control input.
+        No computations are performed; only the slider value is read from the GUI and applied to the plant.
+        '''
         self.simulator = simulator
         self.model = model
     
@@ -34,6 +38,26 @@ class ManualController:
 
 class PIDController:
     def __init__(self, simulator, model):
+        '''
+        A PID controller performs three separate operations on the error signal:
+
+        1) P (proportional): multiplies the error by the parameter Kp
+        2) I (integral): integrates the error over all previous values and multiplies by the parameter Ki
+        3) D (derivative): computes the rate of change of the error and multiplies by the parameter Kd
+
+        The controller gain parameters Kp, Ki and Kd determine the relative weighting of each contribution.
+        These are set by sliders in the GUI.
+
+        - A larger Kp tends to give faster responses and a smaller steady state error
+        (though Kp alone can typically not eliminate a steady state error)
+
+        - A larger Ki tends to eliminate the steady state error faster
+        (though it can lead to oscillations in the step response or even instability if too large)
+
+        - A larger Kd tends to smooth out the oscillations caused by Ki
+        (though it can cause noise in the input).
+        '''
+
         self.simulator = simulator
         self.model = model
 
@@ -45,15 +69,7 @@ class PIDController:
     
     def calc_u(self, y: float):
         '''
-        Compute the PID control input based on the output y = x2.
-
-        A PID controller performs three separate operations on the error signal:
-
-        1) P (proportional): multiplies the error by the parameter Kp
-        2) I (integral): sums the error over all previous values and multiplies by the parameter Ki
-        3) D (derivative): computes the rate of change of the error and multiplies by the parameter Kd
-
-        These three are added up to give the control signal, which is returned.
+        Compute the PID control input based on the measured output y.
         '''
         # error signal e
         error = self.simulator.setpoint - y
@@ -77,6 +93,37 @@ class PIDController:
 
 class H2Controller:
     def __init__(self, simulator, model):
+        '''
+        A H2 controller, also known as an LQG controller, is a type of optimal controller. 
+        It aims to minimise the total signal energy gain of an input disturbance w 
+        to the performance output signal z. The performance output is given by:
+
+        `z = [C1 @ x, u].T`
+
+        where `C1` is the performance gain vector, `x` is the plant state and `u` is the control input.
+
+        In this simulation, since `x` has 2 variables, `C1` is a vector of two values: `C1_1` and `C1_2`, 
+        which are the free parameters for this controler.
+
+        The quantity being minimised is the H2 norm of the lower linear fractional transformation (LFT) of 
+        the generalised plant:
+
+        - The 'generalised plant' is a remodelled form of the plant where the inputs are the control input u 
+        and disturbances w, and the outputs are the measured output y and the performance output z.
+        - The 'lower LFT' T(jω) is the transfer function (TF) from w to z in the generalised plant.
+        - The 'H2 norm' of a TF can be defined in either the (1) frequency or (2) time domains,
+
+        1. ||T(s)||_2 = sqrt{integral from -∞ to ∞: T(jω)* T(jω) dω }
+        2. sqrt{1/(2 pi) * integral from 0 to ∞: z(t)* z(t) dt }
+
+        (where z(t) is the performance output to an impulse disturbance) which are equivalent due to 
+        Parseval's theorem of energy conservation.
+
+        - A larger C1_1 tends to promote minimising the effect of disturbances on x_1.
+        - A larger C1_2 tends to promote minimising the effect of disturbances on x_2 (and hence y).
+        - If C1_1 and C1_2 are both small, this promotes minimising the control input energy ||u||_2.
+        '''
+
         self.simulator = simulator
         self.model = model
         self.h2_gains_computed = False
@@ -85,18 +132,7 @@ class H2Controller:
     
     def calc_u(self, y: float):
         '''
-        Compute the H2 optimal control input with output feedback.
-
-        A H2 controller aims to minimise the H2 norm (total signal energy gain) of an input disturbance w 
-        to the performance output signal z. The performance output is given by:
-
-        `z = [C1_1 * x_1 + C1_2 * x_2, u].T`
-
-        where C1_1 and C1_2 are the controller parameters (multipliers of the state variables in the objective function).
-        
-        For white noise disturbances (Gaussian with zero mean), H2 optimal control equivalent to LQR 
-        (linear quadratic regulator) with a Kalman filter as the optimal observer (LQG - linear quadratic 
-        Gaussian control).
+        Compute the H2 optimal control input based on the measured output y.
         '''
 
         # check if we need to recompute performance output vector (C1 may have changed)

@@ -23,6 +23,27 @@ except OSError:
 class Simulation(QWidget):
 
     def __init__(self):
+        '''
+        Create a simulation of a closed-loop feedback control system. Definitions:
+
+        - The **plant** is the system we wish to control. We can apply inputs to the plant, and measure its output.
+        - The **set point** (aka 'reference') is the value that we want our plant's output to go towards.
+        - The **error** is the difference between the plant's measured output and the set point.
+        - The **controller** receives the error and computes a suitable input to apply to the plant.
+
+        This forms a continuous cycle which iterates through time. A well-designed controller should reduce the 
+        error to zero, guiding the plant being controlled towards its set point, without causing the plant to
+        'blow up' (lose stability), despite the presence of random disturbances (noise).
+
+        The plant's behaviour is mathematically modelled using a **state**, which in general can be a 
+        vector of variables which evolve in time. Disturbances are included in this simulation as 
+        additive white noise (random numbers drawn from a Normal distribution with zero mean are added 
+        to the plant model).
+
+        Transfer functions (TFs) are the relationships between the inputs and outputs of any system 
+        (e.g. the controller, the plant, the whole system), expressed as functions of s in the Laplace transform 
+        domain. For s = jω, the TF G(s) is G(jω), which is the frequency response of the system at input frequency ω.
+        '''
         
         # call the base class constructor
         super().__init__()
