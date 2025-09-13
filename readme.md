@@ -4,16 +4,19 @@ https://github.com/user-attachments/assets/9ebc596b-dc7c-4065-8524-7f06ba27772c
 
 ## Requirements
 
-External libraries are NumPy (matrices), SciPy (linear algebra and integration), Matplotlib (plotting) and PyQt6 (GUI). Install using:
+The only libraries used are NumPy (matrices), SciPy (linear algebra and integration), Matplotlib (plotting) and PyQt6 (GUI). You can install the most up-to-date versions using:
 
-`$ pip install numpy scipy matplotlib PyQt6`
+```bash
+pip install numpy scipy matplotlib PyQt6
+```
 
-Alternatively, `PyQt6` can be swapped out for `PySide6` by replacing the `import` lines with:
+or see below for installing specific versions for guaranteed compatability.
+
+`PyQt6` can be easily swapped out for `PySide6` by replacing the `import` lines in `gui.py` and `main.py` with:
 
 ```python
-from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                             QGridLayout, QSlider, QLabel, QGroupBox, QRadioButton)
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import ...
+from PySide6.QtCore import ...
 ```
 
 ## How to run
