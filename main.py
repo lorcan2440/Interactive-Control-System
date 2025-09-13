@@ -178,8 +178,10 @@ class Simulation(QWidget):
         self.ax1.legend(loc='lower left')
         self.ax2.legend(loc='lower left')
 
-        self.ax1.set_ylim(min(self.y_lim_minus, min(self.u_data)), max(self.y_lim_plus, max(self.u_data)))
-        self.ax2.set_ylim(min(self.u_lim_minus, min(self.u_data)), max(self.u_lim_plus, max(self.u_data)))
+        self.ax1.set_ylim(min(self.y_lim_minus, min(self.y_measured_data)), 
+                          max(self.y_lim_plus, max(self.y_measured_data)))
+        self.ax2.set_ylim(min(self.u_lim_minus, min(self.u_data)), 
+                          max(self.u_lim_plus, max(self.u_data)))
 
         '''
         # NOTE: this doesn't seem to work, so just manually set the limits as above

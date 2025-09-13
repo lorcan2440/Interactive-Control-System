@@ -255,3 +255,5 @@ class GUI:
 
         layout.addLayout(control_layout)
         self.simulator.setLayout(layout)
+
+        self.simulator.showMaximized()
