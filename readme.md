@@ -58,7 +58,7 @@ python main.py
 ## Future ideas
 
 - [ ] Plot the error signal e instead of the output y in the top subplot.
-- [ ] Add feedforward and bang-bang control.
+- [x] Add feedforward and bang-bang control.
 - [ ] Show the poles of the OLTF L(s) in the complex plane and allow interactive pole placement.
 - [ ] Show a Bode/Nyquist plot of L(s) with the gain/phase margins and allow switching between them.
 - [ ] Add a lead-lag compensator with interactive loop-shaping
