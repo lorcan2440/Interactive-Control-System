@@ -23,17 +23,21 @@ except OSError:
 class Simulation(QWidget):
 
     def __init__(self):
+        
+        # call the base class constructor
         super().__init__()
 
         # time steps
-        self.dt = 0.1  # GUI updates every dt time units
-        self.solver_dt = 0.001  # ODE solver step size
+        self.dt = 0.1               # GUI and measurement updates every dt time units
+        self.solver_dt = 0.001      # dynamics update every solver_dt time units
+        self.graph_window = 5.0     # time units shown on graph
 
         # default settings (initial values)
-        self.w1_stddev = 0.1                            # process noise standard deviation
-        self.w2_stddev = 0.05                           # measurement noise standard deviation
+        self.w1_stddev = 0.00                           # process noise standard deviation
+        self.w2_stddev = 0.00                           # measurement noise standard deviation
         self.state_x = np.array([0.0, 0.0])             # initial states: x1, x2
-        self.controller_type = ControllerType.MANUAL    # default controller type
+        self.y_measured = self.state_x[1]               # initial measured output
+        self.controller_type = ControllerType.H2        # default controller type
         
         self.manual_u = 0.0
         self.manual_enabled = True if self.controller_type is ControllerType.MANUAL else False
@@ -54,8 +58,8 @@ class Simulation(QWidget):
             'w1_stddev': {'min': 0.0,  'max': 1.0,  'step': 0.01,   'init': self.w1_stddev},
             'w2_stddev': {'min': 0.0,  'max': 1.0,  'step': 0.01,   'init': self.w2_stddev},
             'Kp':        {'min': 0.0,  'max': 20.0, 'step': 0.05,   'init': self.Kp},
-            'Ki':        {'min': 0.0,  'max': 500,  'step': 1.00,   'init': self.Ki},
-            'Kd':        {'min': 0.0,  'max': 0.02, 'step': 0.0001, 'init': self.Kd},
+            'Ki':        {'min': 0.0,  'max': 20.0, 'step': 0.05,   'init': self.Ki},
+            'Kd':        {'min': 0.0,  'max': 50.0, 'step': 0.05,   'init': self.Kd},
             'h2_C1_1':   {'min': -3.0, 'max': 3.0,  'step': 0.01,   'init': self.h2_C1_1},
             'h2_C1_2':   {'min': -3.0, 'max': 3.0,  'step': 0.01,   'init': self.h2_C1_2},
         }
@@ -70,18 +74,82 @@ class Simulation(QWidget):
         
         # attach GUI window
         self.ui_components = GUI(self)
-        self.user_interface()  # init GUI
+        self.ui_components.user_interface()  # init GUI
 
         # start simulation timer
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_simulation)
         self.timer.start(int(self.dt * 1000))  # convert dt to milliseconds
 
-    def user_interface(self):
+    def update_simulation(self):
         '''
-        Contains the sliders and plots on screen.
+        Simulate the system trajectory between now and the next animation frame.
         '''
-        self.ui_components.user_interface()
+        t_span = (0, self.dt)
+        t_eval = np.arange(0, self.dt, self.solver_dt)
+
+        # Simulate plant dynamics over this time step
+        # The control input is computed as part of the dynamics, and may vary throughout the step.
+        # The controller only sees the value of y_measured, which is constant throughout the step.
+        sol = solve_ivp(self.plant.system_dynamics, t_span, self.state_x,
+                        t_eval=t_eval, method='RK45', max_step=self.solver_dt)
+
+        self.state_x = sol.y[:, -1]  # state vector at the end of the interval
+
+        # Take a noisy measurement
+        self.y_measured = self.plant.measurement(self.state_x)
+
+        self.update_graphs()
+
+    def update_graphs(self):
+        '''
+        Graph the next animation frame. For better frame rate, only the endpoints of each time 
+        step are plotted, not the intermediate points (even though they are calculated in the 
+        integration step).
+        '''
+
+        # update plot data
+        self.t_data.append(self.t_data[-1] + self.dt)
+        self.y_true_data.append(self.state_x[1])        # true output y = x2
+        self.y_measured_data.append(self.y_measured)    # noisy measurement
+        self.u_data.append(self.last_u)
+
+        # only retain the most recent data points visible on the graph
+        if len(self.t_data) > 1 + self.graph_window / self.dt:
+            self.t_data.pop(0)
+            self.y_true_data.pop(0)
+            self.y_measured_data.pop(0)
+            self.u_data.pop(0)
+
+        # use a sliding window of self.graph_window time units
+        if self.t_data[-1] > self.graph_window:
+            self.ax1.set_xlim(self.t_data[-1] - self.graph_window, self.t_data[-1])
+            self.ax2.set_xlim(self.t_data[-1] - self.graph_window, self.t_data[-1])
+
+        # update plots with truncated data
+        self.line_y_true.set_xdata(self.t_data)
+        self.line_y_true.set_ydata(self.y_true_data)
+        self.line_y_true.set_label('$ y_{true} = $' + f' {self.y_true_data[-1]:.3f}')
+        self.line_y_measured.set_xdata(self.t_data)
+        self.line_y_measured.set_ydata(self.y_measured_data)
+        self.ref_line.set_xdata(self.t_data)
+        self.ref_line.set_ydata([self.setpoint] * len(self.t_data))
+
+        self.line_u.set_xdata(self.t_data)
+        self.line_u.set_ydata(self.u_data)
+        self.line_u.set_label('$ u = $' + f' {self.last_u:.3f}')
+
+        # adjust autoscaling
+        self.ax1.legend(loc='upper right')
+        self.ax1.relim()
+        self.ax1.autoscale_view(scaley=True)
+        self.ax2.legend(loc='upper right')
+        self.ax2.relim()
+        self.ax2.autoscale_view(scaley=True)
+
+        # 1.0008259821594614 after 40 seconds
+
+        self.canvas.draw()
 
     def on_controller_changed(self):
         '''
@@ -168,61 +236,6 @@ class Simulation(QWidget):
         cfg = self.slider_configs['h2_C1_2']
         self.h2_C1_2 = cfg['min'] + value * cfg['step']
         self.h2_C1_2_label.setText(f"C1_2: {self.h2_C1_2:.2f}")
-
-    def update_simulation(self):
-        '''
-        Simulate the system trajectory between now and the next frame.
-        '''
-        t_span = (0, self.dt)
-        t_eval = np.arange(0, self.dt, self.solver_dt)
-
-        # integrate the dynamic model over this animation time span
-        sol = solve_ivp(self.plant.system_dynamics, t_span, self.state_x, t_eval=t_eval, method='RK45')
-
-        # update state
-        self.state_x = sol.y[:, -1]  # last row
-
-        # generate measurement noise for the final state
-        w2_final = np.random.normal(0, self.w2_stddev)
-        y_measured = self.state_x[1] + w2_final
-
-        # update plot data
-        self.t_data.append(self.t_data[-1] + self.dt)
-        self.y_true_data.append(self.state_x[1])  # true output y = x2
-        self.y_measured_data.append(y_measured)  # noisy measurement
-        self.u_data.append(self.last_u)
-
-        # only retain the 1000 most recent data points
-        if len(self.t_data) > 1000:
-            self.t_data.pop(0)
-            self.y_true_data.pop(0)
-            self.y_measured_data.pop(0)
-            self.u_data.pop(0)
-
-        # use a sliding window of 5 time units
-        if self.t_data[-1] > 5:
-            self.ax1.set_xlim(self.t_data[-1] - 5, self.t_data[-1])
-            self.ax2.set_xlim(self.t_data[-1] - 5, self.t_data[-1])
-
-        # update plots with truncated data
-        self.line_y_true.set_xdata(self.t_data)
-        self.line_y_true.set_ydata(self.y_true_data)
-        self.line_y_measured.set_xdata(self.t_data)
-        self.line_y_measured.set_ydata(self.y_measured_data)
-        self.ref_line.set_xdata(self.t_data)
-        self.ref_line.set_ydata([self.setpoint] * len(self.t_data))
-
-        self.line_u.set_xdata(self.t_data)
-        self.line_u.set_ydata(self.u_data)
-        self.line_u.set_label('$ u = $' + f' {self.last_u:.3f}')
-
-        # adjust autoscaling
-        self.ax1.relim()
-        self.ax1.autoscale_view(scaley=True)
-        self.ax2.relim()
-        self.ax2.autoscale_view(scaley=True)
-
-        self.canvas.draw()
 
     def make_slider_from_cfg(self, key: str, orientation=Qt.Orientation.Horizontal):
         # Helper function to make slider from {min, max, step, init}

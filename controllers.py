@@ -19,7 +19,7 @@ class ManualController:
         self.simulator = simulator
         self.model = model
     
-    def calc_u(self, _t: float, _y: float):
+    def calc_u(self, _y: float):
         '''
         Manual controller that directly sets the control input.
         '''
@@ -36,13 +36,14 @@ class PIDController:
     def __init__(self, simulator, model):
         self.simulator = simulator
         self.model = model
+
         self.reset_memory()
 
     def reset_memory(self):
         self.integral = 0.0
         self.prev_error = 0.0
     
-    def calc_u(self, _t: float, y: float):
+    def calc_u(self, y: float):
         '''
         Compute the PID control input based on the output y = x2.
 
@@ -56,9 +57,6 @@ class PIDController:
         '''
         # error signal e
         error = self.simulator.setpoint - y
-
-        # transfer function
-        # K = lambda s: self.Kp + self.Ki / s + self.Kd * s
 
         # proportional signal
         u_p = self.simulator.Kp * error
@@ -85,7 +83,7 @@ class H2Controller:
         self.last_C1 = None
         self.x_k = np.array([[0.0], [0.0]])  # [x1_hat, x2_hat].T
     
-    def calc_u(self, _t: float, y: float):
+    def calc_u(self, y: float):
         '''
         Compute the H2 optimal control input with output feedback.
 
@@ -168,7 +166,7 @@ class H2Controller:
         dx_k = self.A_cl @ (self.x_k - x_ss) - self.H @ output_error
         self.x_k += dx_k * self.simulator.solver_dt  # Euler's method (simple)
         
-        # Control input: u = F @ x (offset by steady-state values)
+        # control input: u = F @ x (offset by steady-state values)
         u = u_ss + self.F @ (self.x_k - x_ss)
         u = float(u[0][0])  # convert back to scalar
 

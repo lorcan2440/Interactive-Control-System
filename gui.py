@@ -2,6 +2,8 @@ from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QGrou
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
+from controllers import ControllerType
+
 
 class GUI:
     def __init__(self, simulator):
@@ -54,7 +56,6 @@ class GUI:
         controller_select_layout = QHBoxLayout()
         
         self.simulator.manual_radio = QRadioButton("Manual Controller")
-        self.simulator.manual_radio.setChecked(True)
         self.simulator.manual_radio.toggled.connect(self.simulator.on_controller_changed)
         
         self.simulator.pid_radio = QRadioButton("PID Controller")
@@ -184,7 +185,18 @@ class GUI:
         self.simulator.h2_box.setVisible(False)
         self.simulator.pid_box.setVisible(False)
 
-        # manual slider enabled state based on checkbox
+        ### Set initial states
+
+        # set controller radio button type
+        match self.simulator.controller_type:
+            case ControllerType.MANUAL:
+                self.simulator.manual_radio.setChecked(True)
+            case ControllerType.PID:
+                self.simulator.pid_radio.setChecked(True)
+            case ControllerType.H2:
+                self.simulator.h2_radio.setChecked(True)
+
+        # set manual slider enabled state based on checkbox
         self.simulator.update_manual_slider_state()
 
         layout.addLayout(control_layout)
