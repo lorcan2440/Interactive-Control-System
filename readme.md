@@ -2,6 +2,14 @@
 
 https://github.com/user-attachments/assets/9ebc596b-dc7c-4065-8524-7f06ba27772c
 
+## Currently available controllers
+
+- [x] Manual control (choose the control input with your mouse!)
+- [x] Feedforward control (aka open loop control)
+- [x] Bang-bang control (aka on/off control)
+- [x] PID control
+- [x] H2 optimal control (aka LQG control)
+
 ## Requirements
 
 The only libraries used are NumPy (matrices), SciPy (linear algebra and integration), Matplotlib (plotting) and PyQt6 (GUI). You can install the most up-to-date versions using:
@@ -54,14 +62,6 @@ pip install -r requirements.txt
 ```bash
 python main.py
 ```
-
-## Currently available controllers
-
-- [x] Manual control (choose the control input with your mouse!)
-- [x] Feedforward control (aka open loop control)
-- [x] Bang-bang control (aka on/off control)
-- [x] PID control
-- [x] H2 optimal control (aka LQG control) 
 
 ## Future controllers to be added at some point
 
