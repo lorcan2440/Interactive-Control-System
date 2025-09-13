@@ -55,14 +55,27 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Future ideas
+## Currently available controllers
+
+- [x] Manual control (choose the control input with your mouse!)
+- [x] Feedforward control (aka open loop control)
+- [x] Bang-bang control (aka on/off control)
+- [x] PID control
+- [x] H2 optimal control (aka LQG control) 
+
+## Future controllers to be added at some point
+
+- [ ] Lead-lag compensator
+- [ ] Sliding mode control (including boundary layer smoothing)
+- [ ] Model predictive control (solve using OSQP)
+- [ ] H∞ optimal control (solve by either CARE or LMI in CVX)
+- [ ] Neural control (using LSTM)
+- [ ] Reinforcement learning control (using DDPG)
+
+## Other future to-dos
 
 - [ ] Plot the error signal e instead of the output y in the top subplot.
-- [x] Add feedforward and bang-bang control.
 - [ ] Show the poles of the OLTF L(s) in the complex plane and allow interactive pole placement.
 - [ ] Show a Bode/Nyquist plot of L(s) with the gain/phase margins and allow switching between them.
-- [ ] Add a lead-lag compensator with interactive loop-shaping
-- [ ] Add a H_∞ optimal controller, either by solving the CAREs or the LMI using CVX.
-- [ ] Add an MPC using OSQP with editable objective function, constraints and horizon (at this point we may need to rethink the UI as it would be getting cluttered - only show buttons/sliders for the controller being used)
-- [ ] Add an RL-based controller like DDPG (probably way too much to fit inside this project, would need a new program, could maybe borrow from stable_baselines)
-- [ ] Rewrite to run in a browser (no idea how to do this at present... JavaScript? 😭
+- [ ] Add interactive loop-shaping to the lead-lag compensator
+- [ ] Rewrite to run in a browser (no idea how to do this at present... JavaScript? 😭)
