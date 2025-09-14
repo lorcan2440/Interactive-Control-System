@@ -50,15 +50,6 @@ class Simulation(QWidget):
         - y: measurement of compartment 2
         - t: time
 
-        Plant constants:
-        - k_12, k_21: flow rates between compartments
-        - d: drug degradation rate
-
-        State space model:
-        - x_1' = -(k_12 + d) * x_1 + k_21 * x_2 + u
-        - x_2' = k_12 * x_1 - (k_21 + d) * x_2 + w_1
-        - y = x_2 + w_2
-
         Transfer functions (TFs) are the relationships between the inputs and outputs of any system 
         (e.g. the controller, the plant, the whole system), expressed as functions of s in the Laplace transform 
         domain. For s = jω, the TF G(s) is G(jω), which is the frequency response of the system at input frequency ω.

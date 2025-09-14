@@ -5,6 +5,11 @@ from controllers import ControllerType
 
 class PlantModel:
     def __init__(self, simulator):
+        '''
+        Plant constants:
+        - k_12, k_21: flow rates between compartments
+        - d: drug degradation rate
+        '''
 
         self.simulator = simulator
 
@@ -18,6 +23,11 @@ class PlantModel:
         This function is called every `solver_dt` (multiple times per the animation step `dt`).
         The same disturbance input `w1` is used throughout the animation step.
         The control input `u` is calculated within this function each time it is called.
+
+        State space model:
+        - x_1' = -(k_12 + d) * x_1 + k_21 * x_2 + u
+        - x_2' = k_12 * x_1 - (k_21 + d) * x_2 + w_1
+        - y = x_2 + w_2
         '''
 
         # get error signal - 180 degree phase shift from y_measured due to sign convention
