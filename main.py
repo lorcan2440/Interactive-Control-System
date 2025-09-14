@@ -41,6 +41,24 @@ class Simulation(QWidget):
         additive white noise (random numbers drawn from a Normal distribution with zero mean are added 
         to the plant model).
 
+        Plant variables:
+        - x_1: drug concentration in compartment 1 (state variable 1)
+        - x_2: drug concentration in compartment 2 (state variable 2)
+        - u: drug injection (control input)
+        - w_1: model disturbance in compartment 2
+        - w_2: measurement noise
+        - y: measurement of compartment 2
+        - t: time
+
+        Plant constants:
+        - k_12, k_21: flow rates between compartments
+        - d: drug degradation rate
+
+        State space model:
+        - x_1' = -(k_12 + d) * x_1 + k_21 * x_2 + u
+        - x_2' = k_12 * x_1 - (k_21 + d) * x_2 + w_1
+        - y = x_2 + w_2
+
         Transfer functions (TFs) are the relationships between the inputs and outputs of any system 
         (e.g. the controller, the plant, the whole system), expressed as functions of s in the Laplace transform 
         domain. For s = jω, the TF G(s) is G(jω), which is the frequency response of the system at input frequency ω.
@@ -187,15 +205,6 @@ class Simulation(QWidget):
         self.ax2.set_ylim(min(self.u_lim_minus, min(self.u_data)), 
                           max(self.u_lim_plus, max(self.u_data)))
 
-        '''
-        # NOTE: this doesn't seem to work, so just manually set the limits as above
-        self.ax1.relim()
-        self.ax1.autoscale_view(scaley=True)
-        self.ax2.legend(loc='lower left')
-        self.ax2.relim()
-        self.ax2.autoscale_view(scaley=True)
-        '''
-
         self.canvas.draw()
 
     def on_controller_changed(self):
@@ -312,22 +321,43 @@ class Simulation(QWidget):
         self.C1_2 = cfg['min'] + value * cfg['step']
         self.C1_2_label.setText(f"C1_2: {self.C1_2:.2f}")
 
-    def make_slider_from_cfg(self, key: str, orientation=Qt.Orientation.Horizontal):
+    def make_slider_from_cfg(self, key: dict[str, float],
+                             orientation: Qt.Orientation = Qt.Orientation.Horizontal) -> QSlider:
+        '''
+        Helper function to make a slider in the GUI with given min, max, step size and initial value.
+        
+        ### Arguments
+        #### Required
+        - `key` (dict[str, float]): a dict of {'min': ..., 'max': ..., 'step': ..., 'init': ...}
+        #### Optional
+        - `orientation` (Qt.Orientation) (default = Qt.Orientation.Horizontal): 
+        whether to have the slider vertical or horizontal.
+        
+        ### Returns
+        - `QSlider`: the Qt slider object
+        
+        ### Raises
+        - `ValueError`: if the step size is not a positive value.
+        '''        
+
         # Helper function to make slider from {min, max, step, init}
         cfg = self.slider_configs[key]
         if cfg['step'] <= 0:
             raise ValueError(f"slider step must be > 0 for '{key}'")
+        
         # number of steps (integer)
         n_steps = max(1, int(round((cfg['max'] - cfg['min']) / cfg['step'])))
         s = QSlider(orientation)
         s.setMinimum(0)
         s.setMaximum(n_steps)
+
         # initial integer position
         init_int = int(round((cfg.get('init', cfg['min']) - cfg['min']) / cfg['step']))
         init_int = min(max(init_int, 0), n_steps)
         s.setValue(init_int)
         s.setSingleStep(1)
         s.setPageStep(max(1, n_steps // 10))
+
         return s
 
 
