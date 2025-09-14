@@ -82,19 +82,19 @@ class Simulation(QWidget):
         self.C1_1 = 0.0
         self.C1_2 = 1.0
 
-        # sliders: set min, max and step here for each slider.
+        # sliders: set min, max, step size and initial value for each.
         self.slider_configs = {
-            'manual_u':  {'min': -5.0, 'max': 5.0,  'step': 0.1,    'init': self.manual_u},
-            'setpoint':  {'min': -1.0, 'max': 1.0,  'step': 0.01,   'init': self.setpoint},
-            'w1_stddev': {'min': 0.0,  'max': 5.0,  'step': 0.05,   'init': self.w1_stddev},
-            'w2_stddev': {'min': 0.0,  'max': 1.0,  'step': 0.01,   'init': self.w2_stddev},
-            'U_plus':    {'min': 0.0,  'max': 5.0,  'step': 0.1,    'init': self.U_plus},
-            'U_minus':   {'min': -5.0, 'max': 0.0,  'step': 0.1,    'init': self.U_minus},
-            'Kp':        {'min': 0.0,  'max': 20.0, 'step': 0.05,   'init': self.Kp},
-            'Ki':        {'min': 0.0,  'max': 20.0, 'step': 0.05,   'init': self.Ki},
-            'Kd':        {'min': 0.0,  'max': 50.0, 'step': 0.05,   'init': self.Kd},
-            'C1_1':      {'min': -3.0, 'max': 3.0,  'step': 0.01,   'init': self.C1_1},
-            'C1_2':      {'min': -3.0, 'max': 3.0,  'step': 0.01,   'init': self.C1_2},
+            'manual_u':  {'min': -5.0,  'max': 5.0,     'step': 0.1,    'init': self.manual_u},
+            'setpoint':  {'min': -1.0,  'max': 1.0,     'step': 0.01,   'init': self.setpoint},
+            'w1_stddev': {'min': 0.0,   'max': 2.0,     'step': 0.01,   'init': self.w1_stddev},
+            'w2_stddev': {'min': 0.0,   'max': 0.5,     'step': 0.01,   'init': self.w2_stddev},
+            'U_plus':    {'min': 0.0,   'max': 5.0,     'step': 0.1,    'init': self.U_plus},
+            'U_minus':   {'min': -5.0,  'max': 0.0,     'step': 0.1,    'init': self.U_minus},
+            'Kp':        {'min': 0.0,   'max': 20.0,    'step': 0.05,   'init': self.Kp},
+            'Ki':        {'min': 0.0,   'max': 20.0,    'step': 0.05,   'init': self.Ki},
+            'Kd':        {'min': 0.0,   'max': 50.0,    'step': 0.05,   'init': self.Kd},
+            'C1_1':      {'min': -3.0,  'max': 3.0,     'step': 0.1,    'init': self.C1_1},
+            'C1_2':      {'min': -3.0,  'max': 3.0,     'step': 0.1,    'init': self.C1_2},
         }
         
         # attach plant dynamic model that is being controlled
@@ -123,16 +123,20 @@ class Simulation(QWidget):
         t_span = (0, self.dt)
         t_eval = np.arange(0, self.dt, self.solver_dt)
 
+        # sample process noise
+        w1 = np.random.normal(loc=0, scale=self.w1_stddev)
+
         # Simulate plant dynamics over this time step
         # The control input is computed as part of the dynamics, and may vary throughout the step.
         # The controller only sees the value of y_measured, which is constant throughout the step.
-        sol = solve_ivp(self.plant.system_dynamics, t_span, self.state_x,
+        sol = solve_ivp(self.plant.system_dynamics, t_span, self.state_x, args=(w1,),
                         t_eval=t_eval, method='RK45', max_step=self.solver_dt)
 
         self.state_x = sol.y[:, -1]  # state vector at the end of the interval
 
-        # Take a noisy measurement
-        self.y_measured = self.plant.measurement(self.state_x)
+        # sample measurement noise and compute the measured output
+        w2 = np.random.normal(loc=0, scale=self.w2_stddev)
+        self.y_measured = self.plant.measurement(self.state_x, w2)
 
         self.update_graphs()
 
@@ -233,6 +237,7 @@ class Simulation(QWidget):
             self.bangbang_box.setVisible(False)
             self.pid_box.setVisible(False)
             self.h2_box.setVisible(True)
+            self.h2_controller.reset_memory()
     
     def update_setpoint(self, value):
         cfg = self.slider_configs['setpoint']

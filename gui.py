@@ -250,8 +250,7 @@ class GUI:
             case ControllerType.H2:
                 self.simulator.h2_radio.setChecked(True)
 
-        # set manual slider enabled state based on checkbox
-        self.simulator.update_manual_slider_state()
+        self.simulator.update_manual_slider_state()  # enable/disable manual slider based on checkbox
 
         layout.addLayout(control_layout)
         self.simulator.setLayout(layout)

@@ -25,9 +25,13 @@ class ManualController:
         self.simulator = simulator
         self.plant = plant
     
-    def calc_u(self, _y: float):
+    def calc_u(self) -> float:
         '''
-        Manual controller that directly sets the control input.
+        Calculates the control input for a manual controller.
+        This function reads from the slider in the GUI.
+        
+        ### Returns
+        - `float`: the control input.
         '''
         if self.simulator.manual_enabled:
             u = self.simulator.manual_u
@@ -52,7 +56,14 @@ class OpenLoopController:
         self.simulator = simulator
         self.plant = plant
 
-    def calc_u(self, _y: float):
+    def calc_u(self) -> float:
+        '''
+        Calculates the control input for an open-loop (feedforward) controller.
+        This depends only on the current setpoint.
+        
+        ### Returns
+        - `float`: the control input.
+        '''
         y_sp = self.simulator.setpoint
 
         # steady state gain of plant in open-loop conditions = G(0)
@@ -79,10 +90,20 @@ class BangBangController:
         self.simulator = simulator
         self.plant = plant
 
-    def calc_u(self, y: float):
-        if y < self.simulator.setpoint:
+    def calc_u(self, e: float) -> float:
+        '''
+        Calculates the control input for a bang-bang (on-off) controller.
+        Depending on the sign of `e`, one of two discrete control inputs are chosen.
+        
+        ### Arguments
+        - `e` (float): the error, given by y_setpoint - y_measured.
+        
+        ### Returns
+        - `float`: the control input.
+        '''        
+        if e > 0:
             u = self.simulator.U_plus
-        elif y > self.simulator.setpoint:
+        elif e < 0:
             u = self.simulator.U_minus
         else:
             u = 0
@@ -122,26 +143,30 @@ class PIDController:
         self.integral = 0.0
         self.prev_error = 0.0
     
-    def calc_u(self, y: float):
+    def calc_u(self, e: float) -> float:
         '''
-        Compute the PID control input based on the measured output y.
-        '''
-        # error signal e
-        error = self.simulator.setpoint - y
+        Calculates the control input for a PID controller.
+        
+        ### Arguments
+        - `e` (float): the error, given by y_setpoint - y_measured.
+        
+        ### Returns
+        - `float`: the control input
+        '''        
 
         # proportional signal
-        u_p = self.simulator.Kp * error
+        u_p = self.simulator.Kp * e
         # integral signal (trapezium rule)
-        self.integral += 1/2 * (error + self.prev_error) * self.simulator.solver_dt
+        self.integral += 1/2 * (e + self.prev_error) * self.simulator.solver_dt
         u_i = self.simulator.Ki * self.integral
         # derivative signal
-        derivative = (error - self.prev_error) / self.simulator.solver_dt
+        derivative = (e - self.prev_error) / self.simulator.solver_dt
         u_d = self.simulator.Kd * derivative
 
         # control input
         u = u_p + u_i + u_d
 
-        self.prev_error = error
+        self.prev_error = e
         self.simulator.last_u = u
         return u
 
@@ -184,11 +209,26 @@ class H2Controller:
         self.h2_gains_computed = False
         self.last_C1 = None
         self.x_k = np.array([[0.0], [0.0]])  # [x1_hat, x2_hat].T
+
+    def reset_memory(self):
+        self.x_k = 0.0
+        self.prev_x_ss = 0.0
+        self.prev_u_ss = 0.0
     
-    def calc_u(self, y: float):
+    def calc_u(self, e: float) -> float:
         '''
-        Compute the H2 optimal control input based on the measured output y.
+        Calculates the control input for a H2 optimal controller (aka LQG controller).
+        
+        ### Arguments
+        - `e` (float): the error, given by y_setpoint - y_measured.
+        
+        ### Returns
+        - `float`: the control input.
         '''
+
+        # store as 1-element arrays
+        y_measured = np.array([[self.simulator.setpoint - e]])
+        e = np.array([[e]])
 
         # check if we need to recompute performance output vector (C1 may have changed)
         current_C1 = (self.simulator.C1_1, self.simulator.C1_2)
@@ -210,7 +250,7 @@ class H2Controller:
             Y = solve_continuous_are(A.T, C2.T, B1 @ B1.T, np.eye(1))  # FARE (filter ARE)
 
             # controller gains
-            self.F = -B2.T @ X   # state feedback gain
+            self.F = B2.T @ X    # state feedback gain
             self.H = Y @ C2.T    # Kalman gain
             self.A_cl = A + B2 @ self.F - self.H @ C2  # closed-loop observer matrix
             
@@ -222,7 +262,7 @@ class H2Controller:
             self.h2_gains_computed = True
             self.last_C1 = current_C1  # cache performance vector
 
-            # optimal H2 norm - note that MATLAB omits the sqrt(2 * pi) factor
+            # optimal H2 norm - NOTE: MATLAB omits the sqrt(2 * pi) factor
             self.h2_norm = np.sqrt(2 * np.pi * (np.trace(B1.T @ X @ B1) + np.trace(self.F @ Y @ self.F.T)))
 
         # recalculate steady-state values at each call (setpoint may have changed)
@@ -252,9 +292,8 @@ class H2Controller:
         self.prev_u_ss = u_ss
 
         # observer dynamics - track error from steady state
-        y_measured = np.array([[y]])
-        output_error = y_measured - self.C2_matrix @ x_ss
-        dx_k = self.A_cl @ (self.x_k - x_ss) - self.H @ output_error
+        # x_k: estimate of plant state vector x
+        dx_k = self.A_cl @ (self.x_k - x_ss) - self.H @ e
         self.x_k += dx_k * self.simulator.solver_dt  # Euler's method (simple)
         
         # control input: u = F @ x (offset by steady-state values)
