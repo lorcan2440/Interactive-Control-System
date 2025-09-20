@@ -122,6 +122,8 @@ class Simulation(QWidget):
         
         # initialise GUI window
         self.gui = GUI(self)
+        self.gui.init_two_plot_layout()
+        self.gui.init_settings()
 
         # start simulation timer
         self.timer = QTimer()
@@ -250,15 +252,19 @@ class Simulation(QWidget):
     def on_secondary_plot_changed(self):
         if self.secondary_off_radio.isChecked():
             self.plot_type = PlotType.HIDE
+            self.gui.del_plots(keep_time_domain_only=True)
         elif self.bode_radio.isChecked():
             self.plot_type = PlotType.BODE
             self.gui.init_bode_plot()
         elif self.nyquist_radio.isChecked():
             self.plot_type = PlotType.NYQUIST
+            self.gui.init_nyquist_plot()
         elif self.nichols_radio.isChecked():
             self.plot_type = PlotType.NICHOLS
+            self.gui.init_nichols_plot()
         elif self.root_locus_radio.isChecked():
             self.plot_type = PlotType.ROOTLOCUS
+            self.gui.init_root_locus_plot()
     
     def update_setpoint(self, value):
         cfg = self.slider_configs['setpoint']

@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QGroupBox, QRadioButton, QCheckBox
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from controllers import ControllerType
@@ -15,21 +16,30 @@ class GUI:
 
         self.simulator = simulator
 
-        layout = QVBoxLayout()  # overall layout: vertical
+    def init_two_plot_layout(self):
 
-        fig, axs = plt.subplots(nrows=2, ncols=1, figsize=(12, 6))  # constrained_layout=True
-        
-        self.simulator.fig = fig
-        (self.simulator.ax1, self.simulator.ax2) = axs
+        self.layout = QVBoxLayout()  # overall layout: vertical
+
+        #### Plot Settings ####
+
+        self.simulator.fig = plt.figure(figsize=(12, 6))  # constrained_layout=True
+        self.simulator.gs = GridSpec(nrows=2, ncols=1, height_ratios=(1, 1), width_ratios=(1,))
+        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0])
+        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1])
 
         self.simulator.canvas = FigureCanvas(self.simulator.fig)
-        layout.addWidget(self.simulator.canvas)
+        self.layout.addWidget(self.simulator.canvas)
+
+        self.init_time_domain_data(first=True)
+        
+    def init_time_domain_data(self, first: bool = False):
 
         # initialise plot data for both true and measured outputs
-        self.simulator.t_data = [0]
-        self.simulator.y_true_data = [self.simulator.state_x[1]]  # true output y = x2
-        self.simulator.y_measured_data = [self.simulator.state_x[1]]  # measured output (initially same)
-        self.simulator.u_data = [self.simulator.last_u]
+        if first:
+            self.simulator.t_data = [0]
+            self.simulator.y_true_data = [self.simulator.state_x[1]]  # true output y = x2
+            self.simulator.y_measured_data = [self.simulator.state_x[1]]  # measured output (initially same)
+            self.simulator.u_data = [self.simulator.last_u]
 
         # output plot with both true and measured signals
         self.simulator.ax1.set_ylabel("Outputs")
@@ -37,7 +47,8 @@ class GUI:
             self.simulator.t_data, self.simulator.y_true_data, 'b-', label="$ x_2 $")
         self.simulator.line_y_measured, = self.simulator.ax1.plot(
             self.simulator.t_data, self.simulator.y_measured_data, 'kx', markersize=3, label="$ y = x_2 + w_2 $")
-        self.simulator.ref_line, = self.simulator.ax1.plot(self.simulator.t_data, [self.simulator.setpoint], 'r--', label="Setpoint")
+        self.simulator.ref_line, = self.simulator.ax1.plot(self.simulator.t_data, 
+            [self.simulator.setpoint] * len(self.simulator.t_data), 'r--', label="Setpoint")
         self.simulator.ax1.legend(loc="upper right")
         self.simulator.ax1.set_xlim(0, self.simulator.graph_window)
         self.simulator.ax1.set_ylim(self.simulator.y_lim_minus, self.simulator.y_lim_plus)
@@ -49,6 +60,8 @@ class GUI:
         self.simulator.ax2.legend(loc="upper right")
         self.simulator.ax2.set_xlim(0, self.simulator.graph_window)
         self.simulator.ax2.set_ylim(self.simulator.u_lim_minus, self.simulator.u_lim_plus)
+
+    def init_settings(self):
 
         #### Simulation Settings ####
 
@@ -283,10 +296,72 @@ class GUI:
         
         self.simulator.update_manual_slider_state()  # enable/disable manual slider based on checkbox
 
-        layout.addLayout(control_layout)
-        self.simulator.setLayout(layout)
+        self.layout.addLayout(control_layout)
+        self.simulator.setLayout(self.layout)
 
         self.simulator.showMaximized()
 
+    def del_plots(self, keep_time_domain_only: bool = False):
+
+        self.simulator.fig.delaxes(self.simulator.ax1)
+        self.simulator.fig.delaxes(self.simulator.ax2)
+
+        if hasattr(self.simulator, 'ax3'):
+            self.simulator.fig.delaxes(self.simulator.ax3)
+            delattr(self.simulator, 'ax3')
+            
+        if hasattr(self.simulator, 'ax4'):
+            self.simulator.fig.delaxes(self.simulator.ax4)
+            delattr(self.simulator, 'ax4')
+
+        if keep_time_domain_only:
+            self.simulator.gs = GridSpec(nrows=2, ncols=1, height_ratios=(1, 1), width_ratios=(1,))
+            self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0])
+            self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1])
+
+            self.init_time_domain_data()
+
     def init_bode_plot(self):
-        pass
+
+        self.del_plots()
+
+        self.simulator.gs = GridSpec(nrows=2, ncols=2, height_ratios=(1, 1), width_ratios=(1, 1))
+        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0, 0])
+        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1, 0])
+        self.simulator.ax3 = self.simulator.fig.add_subplot(self.simulator.gs[0, 1])
+        self.simulator.ax4 = self.simulator.fig.add_subplot(self.simulator.gs[1, 1])
+        
+        self.init_time_domain_data()
+
+    def init_nyquist_plot(self):
+        
+        self.del_plots()
+
+        self.simulator.gs = GridSpec(nrows=2, ncols=2, height_ratios=(1, 1), width_ratios=(1, 1))
+        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0, 0])
+        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1, 0])
+        self.simulator.ax3 = self.simulator.fig.add_subplot(self.simulator.gs[:, 1])
+
+        self.init_time_domain_data()
+
+    def init_nichols_plot(self):
+        
+        self.del_plots()
+
+        self.simulator.gs = GridSpec(nrows=2, ncols=2, height_ratios=(1, 1), width_ratios=(1, 1))
+        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0, 0])
+        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1, 0])
+        self.simulator.ax3 = self.simulator.fig.add_subplot(self.simulator.gs[:, 1])
+
+        self.init_time_domain_data()
+
+    def init_root_locus_plot(self):
+        
+        self.del_plots()
+
+        self.simulator.gs = GridSpec(nrows=2, ncols=2, height_ratios=(1, 1), width_ratios=(1, 1))
+        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0, 0])
+        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1, 0])
+        self.simulator.ax3 = self.simulator.fig.add_subplot(self.simulator.gs[:, 1])
+
+        self.init_time_domain_data()

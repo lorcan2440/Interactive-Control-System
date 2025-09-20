@@ -11,3 +11,6 @@ class PlotType(Enum):
     def __str__(self):
         """Return the string representation for display purposes"""
         return self.name
+    
+
+
