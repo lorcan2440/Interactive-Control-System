@@ -1,5 +1,6 @@
 # built-ins
 import sys
+import logging
 
 # externals
 import numpy as np
@@ -14,6 +15,7 @@ from controllers import (ControllerType, PlotType,
                          PIDController, H2Controller)
 from plant import PlantModel
 from gui import GUI
+from log_manager import logger
 
 
 try:
@@ -211,8 +213,11 @@ class Simulation(QWidget):
         self.line_bode_gain.set_ydata(bode_gains)
         self.line_bode_phase.set_ydata(bode_phases)
 
-        self.ax3.set_ylim(min(min(bode_gains), -60) - 5, max(max(bode_gains), 60) + 5)
-        self.ax4.set_ylim(min(min(bode_phases), -180) - 5, max(max(bode_phases), 0) + 5)
+        try:
+            self.ax3.set_ylim(min(min(bode_gains), -60) - 5, max(max(bode_gains), 60) + 5)
+            self.ax4.set_ylim(min(min(bode_phases), -180) - 5, max(max(bode_phases), 0) + 5)
+        except ValueError:
+            logger.warning('Could not plot one of the curves in the Bode plot.')
 
         self.ax3.legend(loc='upper right')
         self.ax4.legend(loc='upper right')
@@ -232,12 +237,7 @@ class Simulation(QWidget):
         self.line_nyquist_minus.set_ydata(nyquist_im_minus)
 
         L_plus_1 = self.pid_controller.open_loop_tf(complex(0, 1))
-        Lprime_plus_1 = self.pid_controller.open_loop_tf(complex(0, 1.1)) - self.pid_controller.open_loop_tf(complex(0, 0.9))
-        Lprime_plus_1 /= abs(Lprime_plus_1)
-
         L_minus_1 = self.pid_controller.open_loop_tf(complex(0, -1))
-        Lprime_minus_1 = self.pid_controller.open_loop_tf(complex(0, -1.1)) - self.pid_controller.open_loop_tf(complex(0, -0.9))
-        Lprime_minus_1 /= abs(Lprime_minus_1)
 
         self.circle_nyquist_plus.set_center((np.real(L_plus_1), np.imag(L_plus_1)))
         self.circle_nyquist_minus.set_center((np.real(L_minus_1), np.imag(L_minus_1)))
@@ -256,8 +256,11 @@ class Simulation(QWidget):
         self.line_nichols.set_xdata(bode_phases)
         self.line_nichols.set_ydata(bode_gains)
 
-        self.ax3.set_xlim(min(min(bode_phases), -180) - 5, max(max(bode_phases), 0) + 5)
-        self.ax3.set_ylim(min(min(bode_gains), -60) - 5, max(max(bode_gains), 60) + 5)
+        try:
+            self.ax3.set_xlim(min(min(bode_phases), -180) - 5, max(max(bode_phases), 0) + 5)
+            self.ax3.set_ylim(min(min(bode_gains), -60) - 5, max(max(bode_gains), 60) + 5)
+        except ValueError:
+            logger.warning('Could not plot the Nichols plot.')
 
         self.ax3.legend(loc='upper right')
 
@@ -265,8 +268,6 @@ class Simulation(QWidget):
         '''
         Handle controller type change via radio buttons.
         '''
-
-        self.gui.del_plots(keep_time_domain_only=True)
 
         if self.manual_radio.isChecked():
             self.controller_type = ControllerType.MANUAL
@@ -290,6 +291,8 @@ class Simulation(QWidget):
             self.secondary_plot_settings_box.setVisible(False)
             self.h2_controller.reset_memory()
 
+        self.gui.del_plots(keep_time_domain_only=True)
+        self.secondary_off_radio.setChecked(True)
         self.gui.show_controller_settings_box(self.controller_type)
 
     def on_secondary_plot_changed(self):
