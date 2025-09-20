@@ -209,45 +209,27 @@ class Simulation(QWidget):
         '''
         if self.manual_radio.isChecked():
             self.controller_type = ControllerType.MANUAL
-            self.manual_box.setVisible(True)
-            self.bangbang_box.setVisible(False)
-            self.pid_box.setVisible(False)
-            self.h2_box.setVisible(False)
             self.secondary_plot_settings_box.setVisible(False)
 
         elif self.openloop_radio.isChecked():
             self.controller_type = ControllerType.OPENLOOP
-            self.manual_box.setVisible(False)
-            self.bangbang_box.setVisible(False)
-            self.pid_box.setVisible(False)
-            self.h2_box.setVisible(False)
             self.secondary_plot_settings_box.setVisible(False)
 
         elif self.bangbang_radio.isChecked():
             self.controller_type = ControllerType.BANGBANG
-            self.manual_box.setVisible(False)
-            self.bangbang_box.setVisible(True)
-            self.pid_box.setVisible(False)
-            self.h2_box.setVisible(False)
             self.secondary_plot_settings_box.setVisible(False)
 
         elif self.pid_radio.isChecked():
             self.controller_type = ControllerType.PID
-            self.manual_box.setVisible(False)
-            self.bangbang_box.setVisible(False)
-            self.pid_box.setVisible(True)
-            self.h2_box.setVisible(False)
             self.secondary_plot_settings_box.setVisible(True)
             self.pid_controller.reset_memory()  # reset PID integral/last error when changing to PID
 
         elif self.h2_radio.isChecked():
             self.controller_type = ControllerType.H2
-            self.manual_box.setVisible(False)
-            self.bangbang_box.setVisible(False)
-            self.pid_box.setVisible(False)
-            self.h2_box.setVisible(True)
-            self.secondary_plot_settings_box.setVisible(False)
+            self.secondary_plot_settings_box.setVisible(True)
             self.h2_controller.reset_memory()
+
+        self.gui.show_controller_settings_box(self.controller_type)
 
     def on_secondary_plot_changed(self):
         if self.secondary_off_radio.isChecked():

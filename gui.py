@@ -226,7 +226,28 @@ class GUI:
         self.simulator.pid_box.setLayout(pid_layout)
         control_layout.addWidget(self.simulator.pid_box)
 
-        # secondary plot settings
+        ### H2 Controls ###
+        self.simulator.h2_box = QGroupBox("H2 Controller Parameters")
+        h2_layout = QGridLayout()
+        
+        # C1_1
+        self.simulator.C1_1_slider = self.simulator.make_slider_from_cfg('C1_1')
+        self.simulator.C1_1_slider.valueChanged.connect(self.simulator.update_C1_1)
+        self.simulator.C1_1_label = QLabel(f"C1_1 (performance gain of x_1): {self.simulator.C1_1:.2f}")
+        h2_layout.addWidget(self.simulator.C1_1_slider, 0, 0)
+        h2_layout.addWidget(self.simulator.C1_1_label, 1, 0)
+        
+        # C1_2
+        self.simulator.C1_2_slider = self.simulator.make_slider_from_cfg('C1_2')
+        self.simulator.C1_2_slider.valueChanged.connect(self.simulator.update_C1_2)
+        self.simulator.C1_2_label = QLabel(f"C1_2 (performance gain of x_2): {self.simulator.C1_2:.2f}")
+        h2_layout.addWidget(self.simulator.C1_2_slider, 0, 1)
+        h2_layout.addWidget(self.simulator.C1_2_label, 1, 1)
+        
+        self.simulator.h2_box.setLayout(h2_layout)
+        control_layout.addWidget(self.simulator.h2_box)
+
+        ### Secondary plot settings ###
         self.simulator.secondary_plot_settings_box = QGroupBox("Add plot")
         secondary_plot_layout = QHBoxLayout()
         self.simulator.secondary_plot_settings_box.setLayout(secondary_plot_layout)
@@ -249,27 +270,6 @@ class GUI:
         secondary_plot_layout.addWidget(self.simulator.nyquist_radio)
         secondary_plot_layout.addWidget(self.simulator.nichols_radio)
         secondary_plot_layout.addWidget(self.simulator.root_locus_radio)
-
-        ### H2 Controls ###
-        self.simulator.h2_box = QGroupBox("H2 Controller Parameters")
-        h2_layout = QGridLayout()
-        
-        # C1_1
-        self.simulator.C1_1_slider = self.simulator.make_slider_from_cfg('C1_1')
-        self.simulator.C1_1_slider.valueChanged.connect(self.simulator.update_C1_1)
-        self.simulator.C1_1_label = QLabel(f"C1_1 (performance gain of x_1): {self.simulator.C1_1:.2f}")
-        h2_layout.addWidget(self.simulator.C1_1_slider, 0, 0)
-        h2_layout.addWidget(self.simulator.C1_1_label, 1, 0)
-        
-        # C1_2
-        self.simulator.C1_2_slider = self.simulator.make_slider_from_cfg('C1_2')
-        self.simulator.C1_2_slider.valueChanged.connect(self.simulator.update_C1_2)
-        self.simulator.C1_2_label = QLabel(f"C1_2 (performance gain of x_2): {self.simulator.C1_2:.2f}")
-        h2_layout.addWidget(self.simulator.C1_2_slider, 0, 1)
-        h2_layout.addWidget(self.simulator.C1_2_label, 1, 1)
-        
-        self.simulator.h2_box.setLayout(h2_layout)
-        control_layout.addWidget(self.simulator.h2_box)
 
         ### Set starting object states
 
@@ -300,6 +300,22 @@ class GUI:
         self.simulator.setLayout(self.layout)
 
         self.simulator.showMaximized()
+
+    def show_controller_settings_box(self, controller_type: ControllerType):
+        '''
+        Show the boxes for a given controller type while hiding all others.
+        '''
+        type_to_obj = {ControllerType.MANUAL: self.simulator.manual_box,
+                       ControllerType.OPENLOOP: None,
+                       ControllerType.BANGBANG: self.simulator.bangbang_box,
+                       ControllerType.PID: self.simulator.pid_box,
+                       ControllerType.H2: self.simulator.h2_box}
+        
+        for c in type_to_obj:
+            if controller_type is c and type_to_obj[c] is not None:
+                type_to_obj[c].setVisible(True)
+            elif controller_type is not c and type_to_obj[c] is not None:
+                type_to_obj[c].setVisible(False)
 
     def del_plots(self, keep_time_domain_only: bool = False):
 
