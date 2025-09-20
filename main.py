@@ -5,7 +5,6 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
-from scipy.optimize import root_scalar
 from PyQt6.QtWidgets import QApplication, QWidget, QSlider
 from PyQt6.QtCore import Qt, QTimer
 
@@ -72,6 +71,7 @@ class Simulation(QWidget):
         self.u_lim_plus = 5.0
         self.freq_min = 1e-2
         self.freq_max = 1e6
+        self.freq_range = np.logspace(np.log10(self.freq_min), np.log10(self.freq_max), 100)
 
         # default settings (initial values)
         self.w1_stddev = 0.0                            # process noise standard deviation
@@ -226,7 +226,7 @@ class Simulation(QWidget):
 
         elif self.h2_radio.isChecked():
             self.controller_type = ControllerType.H2
-            self.secondary_plot_settings_box.setVisible(True)
+            self.secondary_plot_settings_box.setVisible(False)
             self.h2_controller.reset_memory()
 
         self.gui.show_controller_settings_box(self.controller_type)
