@@ -9,11 +9,11 @@ from PyQt6.QtWidgets import QApplication, QWidget, QSlider
 from PyQt6.QtCore import Qt, QTimer
 
 # locals
-from controllers import (ControllerType, ManualController, OpenLoopController, BangBangController, 
+from controllers import (ControllerType, PlotType,
+                         ManualController, OpenLoopController, BangBangController, 
                          PIDController, H2Controller)
 from plant import PlantModel
 from gui import GUI
-from secondary_plots import PlotType
 
 
 try:

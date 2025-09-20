@@ -6,8 +6,7 @@ from matplotlib.patches import Circle, ArrowStyle, FancyArrowPatch
 from matplotlib.ticker import MultipleLocator, AutoMinorLocator, LogLocator
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
-from controllers import ControllerType
-from secondary_plots import PlotType
+from controllers import ControllerType, PlotType
 
 
 class GUI:

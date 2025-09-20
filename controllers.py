@@ -15,6 +15,18 @@ class ControllerType(Enum):
     def __str__(self):
         """Return the string representation for display purposes"""
         return self.name
+    
+
+class PlotType(Enum):
+    HIDE = auto()
+    BODE = auto()
+    NYQUIST = auto()
+    NICHOLS = auto()
+    ROOTLOCUS = auto()
+    
+    def __str__(self):
+        """Return the string representation for display purposes"""
+        return self.name
 
 
 class ManualController:
