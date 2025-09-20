@@ -370,7 +370,7 @@ class GUI:
         self.simulator.ax4.set_xlabel(r'Frequency, $ \omega $ / $ rad/s $')
         self.simulator.ax4.set_ylabel(r'Phase, $ \angle \ L(j \omega) $ / $ ^{\circ} $')
         self.simulator.line_bode_phase, = self.simulator.ax4.semilogx(
-            self.simulator.freq_range, np.angle(self.simulator.oltf_data, deg=True), label='OLTF')
+            self.simulator.freq_range, np.angle(self.simulator.oltf_data, deg=True), 'r', label='OLTF')
         self.simulator.ax4.legend(loc='upper right')
         self.simulator.ax4.set_xlim(self.simulator.freq_min, self.simulator.freq_max)
         self.simulator.ax4.set_ylim(-200, 150)
@@ -409,7 +409,6 @@ class GUI:
         self.simulator.ax3.add_patch(self.simulator.circle_nyquist_plus)
         self.simulator.ax3.add_patch(self.simulator.circle_nyquist_minus)
 
-    '''
     def init_nichols_plot(self):
         
         self.del_plots()
@@ -421,13 +420,17 @@ class GUI:
 
         self.init_time_domain_data()
 
+        self.simulator.oltf_data = np.ones_like(self.simulator.freq_range)  # L(jω)
+        self.simulator.ax3.set_xlabel(r'Phase, $ \angle \ L(j \omega) $ / $ ^{\circ} $')
+        self.simulator.ax3.set_ylabel(r'Gain, $ 20 \ log_{10} | L(j \omega) | $ / dB')
 
-        self.simulator.ax3.set_xlim(self.simulator.freq_min, self.simulator.freq_max)
-        self.simulator.ax3.set_ylim(-200, 150)
-        self.simulator.ax3.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(1.0, 10.0) * 0.1, numticks=10))
-        self.simulator.ax3.yaxis.set_major_locator(MultipleLocator(base=45))
-        self.simulator.ax3.yaxis.set_minor_locator(AutoMinorLocator(n=3))
-    '''
+        self.simulator.line_nichols, = self.simulator.ax3.plot(
+            np.angle(self.simulator.oltf_data, deg=True), 20 * np.log10(np.abs(self.simulator.oltf_data)),
+            'r', label='OLTF')
+        
+        self.simulator.ax3.set_xlim(-200, 150)
+        self.simulator.ax3.set_ylim(-60, 60)
+
     def init_root_locus_plot(self):
         
         self.del_plots()

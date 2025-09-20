@@ -247,6 +247,20 @@ class Simulation(QWidget):
 
         self.ax3.legend(loc='upper right')
 
+    def update_nichols_plot(self):
+
+        oltf_jw = [self.pid_controller.open_loop_tf(complex(0, 1) * w) for w in self.freq_range]
+        bode_gains = 20 * np.log10(np.abs(oltf_jw))
+        bode_phases = np.angle(oltf_jw, deg=True)
+
+        self.line_nichols.set_xdata(bode_phases)
+        self.line_nichols.set_ydata(bode_gains)
+
+        self.ax3.set_xlim(min(min(bode_phases), -180) - 5, max(max(bode_phases), 0) + 5)
+        self.ax3.set_ylim(min(min(bode_gains), -60) - 5, max(max(bode_gains), 60) + 5)
+
+        self.ax3.legend(loc='upper right')
+
     def on_controller_changed(self):
         '''
         Handle controller type change via radio buttons.
