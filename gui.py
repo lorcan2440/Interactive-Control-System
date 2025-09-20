@@ -51,7 +51,7 @@ class GUI:
             self.simulator.t_data, self.simulator.y_measured_data, 'kx', markersize=3, label="$ y = x_2 + w_2 $")
         self.simulator.ref_line, = self.simulator.ax1.plot(self.simulator.t_data, 
             [self.simulator.setpoint] * len(self.simulator.t_data), 'r--', label="Setpoint")
-        self.simulator.ax1.legend(loc="upper right")
+        self.simulator.ax1.legend(loc="lower left")
         self.simulator.ax1.set_xlim(0, self.simulator.graph_window)
         self.simulator.ax1.set_ylim(self.simulator.y_lim_minus, self.simulator.y_lim_plus)
 
@@ -59,7 +59,7 @@ class GUI:
         self.simulator.ax2.set_xlabel("Time")
         self.simulator.ax2.set_ylabel("Input")
         self.simulator.line_u, = self.simulator.ax2.plot(self.simulator.t_data, self.simulator.u_data, 'g-', label="$ u $")
-        self.simulator.ax2.legend(loc="upper right")
+        self.simulator.ax2.legend(loc="lower left")
         self.simulator.ax2.set_xlim(0, self.simulator.graph_window)
         self.simulator.ax2.set_ylim(self.simulator.u_lim_minus, self.simulator.u_lim_plus)
 

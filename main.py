@@ -265,6 +265,9 @@ class Simulation(QWidget):
         '''
         Handle controller type change via radio buttons.
         '''
+
+        self.gui.del_plots(keep_time_domain_only=True)
+
         if self.manual_radio.isChecked():
             self.controller_type = ControllerType.MANUAL
             self.secondary_plot_settings_box.setVisible(False)
