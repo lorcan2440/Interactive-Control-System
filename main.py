@@ -69,8 +69,8 @@ class Simulation(QWidget):
         self.y_lim_plus = 2.0
         self.u_lim_minus = -5.0
         self.u_lim_plus = 5.0
-        self.freq_min = 1e-2
-        self.freq_max = 1e6
+        self.freq_min = 1e-3
+        self.freq_max = 1e4
         self.freq_range = np.logspace(np.log10(self.freq_min), np.log10(self.freq_max), 100)
 
         # default settings (initial values)
@@ -203,6 +203,17 @@ class Simulation(QWidget):
 
         self.canvas.draw()
 
+    def update_bode_plots(self):
+
+        oltf_jw = [self.pid_controller.open_loop_tf(complex(0, 1) * w) for w in self.freq_range]
+        bode_gains = 20 * np.log10(np.abs(oltf_jw))
+        bode_phases = np.angle(oltf_jw, deg=True)
+        self.line_bode_gain.set_ydata(bode_gains)
+        self.line_bode_phase.set_ydata(bode_phases)
+
+        self.ax3.set_ylim(min(min(bode_gains), -60) - 5, max(max(bode_gains), 60) + 5)
+        self.ax4.set_ylim(min(min(bode_phases), -180) - 5, max(max(bode_phases), 0) + 5) 
+
     def on_controller_changed(self):
         '''
         Handle controller type change via radio buttons.
@@ -300,16 +311,19 @@ class Simulation(QWidget):
         cfg = self.slider_configs['Kp']
         self.Kp = cfg['min'] + value * cfg['step']
         self.Kp_label.setText(f"Kp: {self.Kp:.4f}")
+        self.update_bode_plots()
 
     def update_Ki(self, value):
         cfg = self.slider_configs['Ki']
         self.Ki = cfg['min'] + value * cfg['step']
         self.Ki_label.setText(f"Ki: {self.Ki:.4f}")
+        self.update_bode_plots()
 
     def update_Kd(self, value):
         cfg = self.slider_configs['Kd']
         self.Kd = cfg['min'] + value * cfg['step']
         self.Kd_label.setText(f"Kd: {self.Kd:.4f}")
+        self.update_bode_plots()
 
     def update_C1_1(self, value):
         cfg = self.slider_configs['C1_1']

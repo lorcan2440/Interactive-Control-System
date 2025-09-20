@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QGrou
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.ticker import MultipleLocator
+from matplotlib.ticker import MultipleLocator, AutoMinorLocator, LogLocator
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from controllers import ControllerType
@@ -357,7 +357,10 @@ class GUI:
             self.simulator.freq_range, 20 * np.log10(np.abs(self.simulator.oltf_data)), 'r', label='OLTF')
         self.simulator.ax3.legend(loc='upper right')
         self.simulator.ax3.set_xlim(self.simulator.freq_min, self.simulator.freq_max)
+        self.simulator.ax3.set_ylim(-60, 60)
+        self.simulator.ax3.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(0.1, 1.0) * 0.1, numticks=10))
         self.simulator.ax3.yaxis.set_major_locator(MultipleLocator(base=20))
+        self.simulator.ax3.yaxis.set_minor_locator(AutoMinorLocator(n=5))
 
         self.simulator.ax4.set_xlabel(r'Frequency, $ \omega $ / $ rad/s $')
         self.simulator.ax4.set_ylabel(r'Phase, $ \angle \ L(j \omega) $ / $ ^{\circ} $')
@@ -365,7 +368,10 @@ class GUI:
             self.simulator.freq_range, np.angle(self.simulator.oltf_data, deg=True), label='OLTF')
         self.simulator.ax4.legend(loc='upper right')
         self.simulator.ax4.set_xlim(self.simulator.freq_min, self.simulator.freq_max)
+        self.simulator.ax4.set_ylim(-200, 150)
+        self.simulator.ax4.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(1.0, 10.0) * 0.1, numticks=10))
         self.simulator.ax4.yaxis.set_major_locator(MultipleLocator(base=45))
+        self.simulator.ax4.yaxis.set_minor_locator(AutoMinorLocator(n=3))
 
     def init_nyquist_plot(self):
         

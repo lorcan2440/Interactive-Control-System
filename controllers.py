@@ -162,24 +162,9 @@ class PIDController:
         for when the plant is controlled by the PID controller.
 
         The OLTF satisfies L(s) = K(s) G(s), where K(s) is the controller TF and G(s) is the plant TF.
-
-        Kp = self.simulator.Kp
-        Ki = self.simulator.Ki
-        Kd = self.simulator.Kd
-
-        # PID controller time constants
-        Ti = Kp / Ki
-        Td = Kd / Kp
-
-        # second pole of plant TF
-        lambda_2 = self.plant.d + self.plant.k12 + self.plant.k21
-
-        L = Kp * self.plant.k12 * (Td * s ** 2 + s + 1 / Ti) / (s * (s + self.plant.d) * (s - lambda_2))
-        return L
         '''
 
         return self.controller_tf(s) * self.plant.plant_tf(s)
-
 
     def calc_u(self, e: float) -> float:
         '''
