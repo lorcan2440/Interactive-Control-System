@@ -212,7 +212,40 @@ class Simulation(QWidget):
         self.line_bode_phase.set_ydata(bode_phases)
 
         self.ax3.set_ylim(min(min(bode_gains), -60) - 5, max(max(bode_gains), 60) + 5)
-        self.ax4.set_ylim(min(min(bode_phases), -180) - 5, max(max(bode_phases), 0) + 5) 
+        self.ax4.set_ylim(min(min(bode_phases), -180) - 5, max(max(bode_phases), 0) + 5)
+
+        self.ax3.legend(loc='upper right')
+        self.ax4.legend(loc='upper right')
+
+    def update_nyquist_plot(self):
+
+        oltf_jw_plus = [self.pid_controller.open_loop_tf(complex(0, 1) * w) for w in self.freq_range]
+        oltf_jw_minus = [self.pid_controller.open_loop_tf(complex(0, -1) * w) for w in self.freq_range]
+        nyquist_re_plus = np.real(oltf_jw_plus)
+        nyquist_im_plus = np.imag(oltf_jw_plus)
+        nyquist_re_minus = np.real(oltf_jw_minus)
+        nyquist_im_minus = np.imag(oltf_jw_minus)
+
+        self.line_nyquist_plus.set_xdata(nyquist_re_plus)
+        self.line_nyquist_plus.set_ydata(nyquist_im_plus)
+        self.line_nyquist_minus.set_xdata(nyquist_re_minus)
+        self.line_nyquist_minus.set_ydata(nyquist_im_minus)
+
+        L_plus_1 = self.pid_controller.open_loop_tf(complex(0, 1))
+        Lprime_plus_1 = self.pid_controller.open_loop_tf(complex(0, 1.1)) - self.pid_controller.open_loop_tf(complex(0, 0.9))
+        Lprime_plus_1 /= abs(Lprime_plus_1)
+
+        L_minus_1 = self.pid_controller.open_loop_tf(complex(0, -1))
+        Lprime_minus_1 = self.pid_controller.open_loop_tf(complex(0, -1.1)) - self.pid_controller.open_loop_tf(complex(0, -0.9))
+        Lprime_minus_1 /= abs(Lprime_minus_1)
+
+        self.circle_nyquist_plus.set_center((np.real(L_plus_1), np.imag(L_plus_1)))
+        self.circle_nyquist_minus.set_center((np.real(L_minus_1), np.imag(L_minus_1)))
+
+        self.ax3.set_xlim(-2.5, 2.5)
+        self.ax3.set_ylim(-2.5, 2.5)
+
+        self.ax3.legend(loc='upper right')
 
     def on_controller_changed(self):
         '''
@@ -243,18 +276,22 @@ class Simulation(QWidget):
         self.gui.show_controller_settings_box(self.controller_type)
 
     def on_secondary_plot_changed(self):
+
         if self.secondary_off_radio.isChecked():
             self.plot_type = PlotType.HIDE
             self.gui.del_plots(keep_time_domain_only=True)
         elif self.bode_radio.isChecked():
             self.plot_type = PlotType.BODE
             self.gui.init_bode_plot()
+            self.update_bode_plots()
         elif self.nyquist_radio.isChecked():
             self.plot_type = PlotType.NYQUIST
             self.gui.init_nyquist_plot()
+            self.update_nyquist_plot()
         elif self.nichols_radio.isChecked():
             self.plot_type = PlotType.NICHOLS
             self.gui.init_nichols_plot()
+            self.update_nichols_plot()
         elif self.root_locus_radio.isChecked():
             self.plot_type = PlotType.ROOTLOCUS
             self.gui.init_root_locus_plot()
@@ -311,19 +348,34 @@ class Simulation(QWidget):
         cfg = self.slider_configs['Kp']
         self.Kp = cfg['min'] + value * cfg['step']
         self.Kp_label.setText(f"Kp: {self.Kp:.4f}")
-        self.update_bode_plots()
+        if self.plot_type is PlotType.BODE:
+            self.update_bode_plots()
+        elif self.plot_type is PlotType.NYQUIST:
+            self.update_nyquist_plot()
+        elif self.plot_type is PlotType.NICHOLS:
+            self.update_nichols_plot()
 
     def update_Ki(self, value):
         cfg = self.slider_configs['Ki']
         self.Ki = cfg['min'] + value * cfg['step']
         self.Ki_label.setText(f"Ki: {self.Ki:.4f}")
-        self.update_bode_plots()
+        if self.plot_type is PlotType.BODE:
+            self.update_bode_plots()
+        elif self.plot_type is PlotType.NYQUIST:
+            self.update_nyquist_plot()
+        elif self.plot_type is PlotType.NICHOLS:
+            self.update_nichols_plot()
 
     def update_Kd(self, value):
         cfg = self.slider_configs['Kd']
         self.Kd = cfg['min'] + value * cfg['step']
         self.Kd_label.setText(f"Kd: {self.Kd:.4f}")
-        self.update_bode_plots()
+        if self.plot_type is PlotType.BODE:
+            self.update_bode_plots()
+        elif self.plot_type is PlotType.NYQUIST:
+            self.update_nyquist_plot()
+        elif self.plot_type is PlotType.NICHOLS:
+            self.update_nichols_plot()
 
     def update_C1_1(self, value):
         cfg = self.slider_configs['C1_1']

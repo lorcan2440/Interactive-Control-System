@@ -2,10 +2,12 @@ from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QGrou
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+from matplotlib.patches import Circle, ArrowStyle, FancyArrowPatch
 from matplotlib.ticker import MultipleLocator, AutoMinorLocator, LogLocator
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from controllers import ControllerType
+from secondary_plots import PlotType
 
 
 class GUI:
@@ -296,9 +298,12 @@ class GUI:
         self.simulator.secondary_off_radio.setChecked(True)
         
         self.simulator.update_manual_slider_state()  # enable/disable manual slider based on checkbox
+        self.simulator.plot_type = PlotType.HIDE
 
         self.layout.addLayout(control_layout)
         self.simulator.setLayout(self.layout)
+
+        self.simulator.on_controller_changed()
 
         self.simulator.showMaximized()
 
@@ -384,6 +389,27 @@ class GUI:
 
         self.init_time_domain_data()
 
+        self.simulator.oltf_data = np.ones_like(self.simulator.freq_range)  # L(jω)
+        self.simulator.ax3.set_xlabel(r'$ Re \ L(j \omega) $')
+        self.simulator.ax3.set_ylabel(r'$ Im \ L(j \omega) $')
+        self.simulator.line_nyquist_plus, = self.simulator.ax3.plot(
+            np.real(self.simulator.oltf_data), np.imag(self.simulator.oltf_data), color='blue')
+        self.simulator.line_nyquist_minus, = self.simulator.ax3.plot(
+            np.real(self.simulator.oltf_data), np.imag(self.simulator.oltf_data), color='orange')
+        circle = Circle((0, 0), 1, color='k', linestyle='dashdot', fill=False)
+        self.simulator.ax3.plot(-1, 0, color='k', marker='o', markersize=4)
+        self.simulator.ax3.add_patch(circle)
+        self.simulator.ax3.set_aspect('equal')
+
+        self.simulator.circle_nyquist_plus = Circle(xy=(0, 0), radius=0.04,
+            color='blue', label=r'$ \omega = 1 $')
+        self.simulator.circle_nyquist_minus = Circle(xy=(0, 0), radius=0.04,
+            color='orange', label=r'$ \omega = -1 $')
+        
+        self.simulator.ax3.add_patch(self.simulator.circle_nyquist_plus)
+        self.simulator.ax3.add_patch(self.simulator.circle_nyquist_minus)
+
+    '''
     def init_nichols_plot(self):
         
         self.del_plots()
@@ -395,6 +421,13 @@ class GUI:
 
         self.init_time_domain_data()
 
+
+        self.simulator.ax3.set_xlim(self.simulator.freq_min, self.simulator.freq_max)
+        self.simulator.ax3.set_ylim(-200, 150)
+        self.simulator.ax3.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(1.0, 10.0) * 0.1, numticks=10))
+        self.simulator.ax3.yaxis.set_major_locator(MultipleLocator(base=45))
+        self.simulator.ax3.yaxis.set_minor_locator(AutoMinorLocator(n=3))
+    '''
     def init_root_locus_plot(self):
         
         self.del_plots()
