@@ -5,6 +5,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
+from scipy.optimize import root_scalar
 from PyQt6.QtWidgets import QApplication, QWidget, QSlider
 from PyQt6.QtCore import Qt, QTimer
 
@@ -13,6 +14,7 @@ from controllers import (ControllerType, ManualController, OpenLoopController, B
                          PIDController, H2Controller)
 from plant import PlantModel
 from gui import GUI
+from secondary_plots import PlotType
 
 
 try:
@@ -60,7 +62,7 @@ class Simulation(QWidget):
 
         # time steps
         self.dt = 0.1               # GUI and measurement updates every dt time units
-        self.solver_dt = 0.001      # dynamics update every solver_dt time units
+        self.solver_dt = 0.005      # dynamics update every solver_dt time units
         self.graph_window = 5.0     # time units shown on graph
 
         # graph range
@@ -68,10 +70,12 @@ class Simulation(QWidget):
         self.y_lim_plus = 2.0
         self.u_lim_minus = -5.0
         self.u_lim_plus = 5.0
+        self.freq_min = 1e-2
+        self.freq_max = 1e6
 
         # default settings (initial values)
-        self.w1_stddev = 0.00                           # process noise standard deviation
-        self.w2_stddev = 0.00                           # measurement noise standard deviation
+        self.w1_stddev = 0.0                            # process noise standard deviation
+        self.w2_stddev = 0.0                            # measurement noise standard deviation
         self.state_x = np.array([0.0, 0.0])             # initial states: x1, x2
         self.y_measured = self.state_x[1]               # initial measured output
         self.controller_type = ControllerType.MANUAL    # default controller type
@@ -116,9 +120,8 @@ class Simulation(QWidget):
         self.pid_controller = PIDController(self, self.plant)
         self.h2_controller = H2Controller(self, self.plant)
         
-        # attach GUI window
-        self.ui_components = GUI(self)
-        self.ui_components.user_interface()  # init GUI
+        # initialise GUI window
+        self.gui = GUI(self)
 
         # start simulation timer
         self.timer = QTimer()
@@ -147,13 +150,13 @@ class Simulation(QWidget):
         w2 = np.random.normal(loc=0, scale=self.w2_stddev)
         self.y_measured = self.plant.measurement(self.state_x, w2)
 
-        self.update_graphs()
+        self.update_time_domain_plots()
 
-    def update_graphs(self):
+    def update_time_domain_plots(self):
         '''
-        Graph the next animation frame. For better frame rate, only the endpoints of each time 
-        step are plotted, not the intermediate points (even though they are calculated in the 
-        integration step).
+        Graph the next animation frame in the time domain. For better frame rate, only the endpoints 
+        of each time step are plotted, not the intermediate points (even though they are calculated 
+        in the integration step).
         '''
 
         # update plot data
@@ -174,7 +177,7 @@ class Simulation(QWidget):
             self.ax1.set_xlim(self.t_data[-1] - self.graph_window, self.t_data[-1])
             self.ax2.set_xlim(self.t_data[-1] - self.graph_window, self.t_data[-1])
 
-        # update plots with truncated data
+        # update time domain plots with truncated data
         self.line_y_true.set_xdata(self.t_data)
         self.line_y_true.set_ydata(self.y_true_data)
         self.line_y_true.set_label('$ y_{true} = $' + f' {self.y_true_data[-1]:.3f}')
@@ -208,6 +211,7 @@ class Simulation(QWidget):
             self.bangbang_box.setVisible(False)
             self.pid_box.setVisible(False)
             self.h2_box.setVisible(False)
+            self.secondary_plot_settings_box.setVisible(False)
 
         elif self.openloop_radio.isChecked():
             self.controller_type = ControllerType.OPENLOOP
@@ -215,6 +219,7 @@ class Simulation(QWidget):
             self.bangbang_box.setVisible(False)
             self.pid_box.setVisible(False)
             self.h2_box.setVisible(False)
+            self.secondary_plot_settings_box.setVisible(False)
 
         elif self.bangbang_radio.isChecked():
             self.controller_type = ControllerType.BANGBANG
@@ -222,6 +227,7 @@ class Simulation(QWidget):
             self.bangbang_box.setVisible(True)
             self.pid_box.setVisible(False)
             self.h2_box.setVisible(False)
+            self.secondary_plot_settings_box.setVisible(False)
 
         elif self.pid_radio.isChecked():
             self.controller_type = ControllerType.PID
@@ -229,6 +235,7 @@ class Simulation(QWidget):
             self.bangbang_box.setVisible(False)
             self.pid_box.setVisible(True)
             self.h2_box.setVisible(False)
+            self.secondary_plot_settings_box.setVisible(True)
             self.pid_controller.reset_memory()  # reset PID integral/last error when changing to PID
 
         elif self.h2_radio.isChecked():
@@ -237,7 +244,21 @@ class Simulation(QWidget):
             self.bangbang_box.setVisible(False)
             self.pid_box.setVisible(False)
             self.h2_box.setVisible(True)
+            self.secondary_plot_settings_box.setVisible(False)
             self.h2_controller.reset_memory()
+
+    def on_secondary_plot_changed(self):
+        if self.secondary_off_radio.isChecked():
+            self.plot_type = PlotType.HIDE
+        elif self.bode_radio.isChecked():
+            self.plot_type = PlotType.BODE
+            self.gui.init_bode_plot()
+        elif self.nyquist_radio.isChecked():
+            self.plot_type = PlotType.NYQUIST
+        elif self.nichols_radio.isChecked():
+            self.plot_type = PlotType.NICHOLS
+        elif self.root_locus_radio.isChecked():
+            self.plot_type = PlotType.ROOTLOCUS
     
     def update_setpoint(self, value):
         cfg = self.slider_configs['setpoint']

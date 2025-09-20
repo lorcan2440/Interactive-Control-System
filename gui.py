@@ -1,4 +1,5 @@
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QGroupBox, QRadioButton, QCheckBox
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
@@ -7,28 +8,30 @@ from controllers import ControllerType
 
 class GUI:
     def __init__(self, simulator):
+        '''
+        The GUI defaults to a two-plot layout, showing the time domain data only.
+        The four-plot layout is triggered by a checkbox in the GUI.
+        '''
+
         self.simulator = simulator
-    
-    def user_interface(self):
-        '''
-        Contains the sliders and plots on screen.
-        '''
 
         layout = QVBoxLayout()  # overall layout: vertical
 
-        #### Plots ####
+        fig, axs = plt.subplots(nrows=2, ncols=1, figsize=(12, 6))  # constrained_layout=True
+        
+        self.simulator.fig = fig
+        (self.simulator.ax1, self.simulator.ax2) = axs
 
-        self.simulator.fig, (self.simulator.ax1, self.simulator.ax2) = plt.subplots(2, 1, sharex=True, figsize=(6, 6))
         self.simulator.canvas = FigureCanvas(self.simulator.fig)
         layout.addWidget(self.simulator.canvas)
 
-        # Initialize plot data for both true and measured outputs
+        # initialise plot data for both true and measured outputs
         self.simulator.t_data = [0]
         self.simulator.y_true_data = [self.simulator.state_x[1]]  # true output y = x2
         self.simulator.y_measured_data = [self.simulator.state_x[1]]  # measured output (initially same)
         self.simulator.u_data = [self.simulator.last_u]
 
-        # Output plot with both true and measured signals
+        # output plot with both true and measured signals
         self.simulator.ax1.set_ylabel("Outputs")
         self.simulator.line_y_true, = self.simulator.ax1.plot(
             self.simulator.t_data, self.simulator.y_true_data, 'b-', label="$ x_2 $")
@@ -39,7 +42,7 @@ class GUI:
         self.simulator.ax1.set_xlim(0, self.simulator.graph_window)
         self.simulator.ax1.set_ylim(self.simulator.y_lim_minus, self.simulator.y_lim_plus)
 
-        # Control input plot
+        # control input plot
         self.simulator.ax2.set_xlabel("Time")
         self.simulator.ax2.set_ylabel("Input")
         self.simulator.line_u, = self.simulator.ax2.plot(self.simulator.t_data, self.simulator.u_data, 'g-', label="$ u $")
@@ -53,7 +56,7 @@ class GUI:
 
         # controller selection radio buttons
         controller_select_box = QGroupBox("Controller Selection")
-        controller_select_layout = QGridLayout()  # QHBoxLayout()
+        controller_select_layout = QGridLayout()
         
         self.simulator.manual_radio = QRadioButton("Manual Control")
         self.simulator.openloop_radio = QRadioButton("Open Loop Control")
@@ -75,11 +78,11 @@ class GUI:
         self.simulator.neural_radio.setDisabled(True)
         self.simulator.rl_radio.setDisabled(True)
 
-        self.simulator.manual_radio.toggled.connect(self.simulator.on_controller_changed)
-        self.simulator.openloop_radio.toggled.connect(self.simulator.on_controller_changed)
-        self.simulator.bangbang_radio.toggled.connect(self.simulator.on_controller_changed)
-        self.simulator.pid_radio.toggled.connect(self.simulator.on_controller_changed)
-        self.simulator.h2_radio.toggled.connect(self.simulator.on_controller_changed)
+        self.simulator.manual_radio.clicked.connect(self.simulator.on_controller_changed)
+        self.simulator.openloop_radio.clicked.connect(self.simulator.on_controller_changed)
+        self.simulator.bangbang_radio.clicked.connect(self.simulator.on_controller_changed)
+        self.simulator.pid_radio.clicked.connect(self.simulator.on_controller_changed)
+        self.simulator.h2_radio.clicked.connect(self.simulator.on_controller_changed)
         
         controller_select_layout.addWidget(self.simulator.manual_radio, 0, 0)
         controller_select_layout.addWidget(self.simulator.openloop_radio, 0, 1)
@@ -210,6 +213,30 @@ class GUI:
         self.simulator.pid_box.setLayout(pid_layout)
         control_layout.addWidget(self.simulator.pid_box)
 
+        # secondary plot settings
+        self.simulator.secondary_plot_settings_box = QGroupBox("Add plot")
+        secondary_plot_layout = QHBoxLayout()
+        self.simulator.secondary_plot_settings_box.setLayout(secondary_plot_layout)
+        control_layout.addWidget(self.simulator.secondary_plot_settings_box)
+
+        self.simulator.secondary_off_radio = QRadioButton("Hide")
+        self.simulator.bode_radio = QRadioButton("Bode plots")
+        self.simulator.nyquist_radio = QRadioButton("Nyquist plot")
+        self.simulator.nichols_radio = QRadioButton("Nichols plot")
+        self.simulator.root_locus_radio = QRadioButton("Root locus plot")
+
+        self.simulator.secondary_off_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
+        self.simulator.bode_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
+        self.simulator.nyquist_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
+        self.simulator.nichols_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
+        self.simulator.root_locus_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
+
+        secondary_plot_layout.addWidget(self.simulator.secondary_off_radio)
+        secondary_plot_layout.addWidget(self.simulator.bode_radio)
+        secondary_plot_layout.addWidget(self.simulator.nyquist_radio)
+        secondary_plot_layout.addWidget(self.simulator.nichols_radio)
+        secondary_plot_layout.addWidget(self.simulator.root_locus_radio)
+
         ### H2 Controls ###
         self.simulator.h2_box = QGroupBox("H2 Controller Parameters")
         h2_layout = QGridLayout()
@@ -236,6 +263,8 @@ class GUI:
         self.simulator.manual_box.setVisible(True)  # the manual box is shown first, others hidden
         self.simulator.h2_box.setVisible(False)
         self.simulator.pid_box.setVisible(False)
+        
+        self.simulator.secondary_plot_settings_box.setVisible(False)
 
         # set controller radio button type
         match self.simulator.controller_type:
@@ -250,9 +279,14 @@ class GUI:
             case ControllerType.H2:
                 self.simulator.h2_radio.setChecked(True)
 
+        self.simulator.secondary_off_radio.setChecked(True)
+        
         self.simulator.update_manual_slider_state()  # enable/disable manual slider based on checkbox
 
         layout.addLayout(control_layout)
         self.simulator.setLayout(layout)
 
         self.simulator.showMaximized()
+
+    def init_bode_plot(self):
+        pass

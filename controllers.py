@@ -1,7 +1,8 @@
 from enum import Enum, auto
+import warnings
 
 import numpy as np
-from scipy.linalg import solve_continuous_are
+from scipy.linalg import solve_continuous_are, solve_continuous_lyapunov
 
 
 class ControllerType(Enum):
@@ -142,7 +143,44 @@ class PIDController:
     def reset_memory(self):
         self.integral = 0.0
         self.prev_error = 0.0
+
+    def controller_tf(self, s: complex) -> complex:
+        '''
+        Evaluate the controller's transfer function, K(s).
+        '''
+        Kp = self.simulator.Kp
+        Ki = self.simulator.Ki
+        Kd = self.simulator.Kd
+
+        K = Kp + Ki / s + Kd * s
+
+        return K
     
+    def open_loop_tf(self, s: complex) -> complex:
+        '''
+        Evaluate the open-loop transfer function (OLTF, aka return ratio), L(s), 
+        for when the plant is controlled by the PID controller.
+
+        The OLTF satisfies L(s) = K(s) G(s), where K(s) is the controller TF and G(s) is the plant TF.
+
+        Kp = self.simulator.Kp
+        Ki = self.simulator.Ki
+        Kd = self.simulator.Kd
+
+        # PID controller time constants
+        Ti = Kp / Ki
+        Td = Kd / Kp
+
+        # second pole of plant TF
+        lambda_2 = self.plant.d + self.plant.k12 + self.plant.k21
+
+        L = Kp * self.plant.k12 * (Td * s ** 2 + s + 1 / Ti) / (s * (s + self.plant.d) * (s - lambda_2))
+        return L
+        '''
+
+        return self.controller_tf(s) * self.plant.plant_tf(s)
+
+
     def calc_u(self, e: float) -> float:
         '''
         Calculates the control input for a PID controller.
@@ -172,6 +210,9 @@ class PIDController:
 
 
 class H2Controller:
+
+    # TODO: investigate H2 controller stability - why does the controller diverge for large C1_1?
+
     def __init__(self, simulator, plant):
         '''
         A H2 controller, also known as an LQG controller, is a type of optimal controller. 
@@ -214,7 +255,18 @@ class H2Controller:
         self.x_k = 0.0
         self.prev_x_ss = 0.0
         self.prev_u_ss = 0.0
-    
+
+    def check_for_observability(self, A: np.ndarray, C: np.ndarray) -> bool:
+        '''
+        Check that the pair (A, C1) is observable, required for the ARE solution and controller stability.
+        '''
+
+        # compute observability Gramian
+        W_o = solve_continuous_lyapunov(A.T, -C.T @ C)
+
+        # check if singular
+        return (np.linalg.matrix_rank(W_o) == W_o.shape[0] and W_o.shape[0] == W_o.shape[1])
+
     def calc_u(self, e: float) -> float:
         '''
         Calculates the control input for a H2 optimal controller (aka LQG controller).
@@ -264,6 +316,10 @@ class H2Controller:
 
             # optimal H2 norm - NOTE: MATLAB omits the sqrt(2 * pi) factor
             self.h2_norm = np.sqrt(2 * np.pi * (np.trace(B1.T @ X @ B1) + np.trace(self.F @ Y @ self.F.T)))
+
+            # check for stability based on C1 variation
+            if not self.check_for_observability(A, C1):
+                warnings.warn(f'UNSTABLE at C1 = {self.C1}: observability Gramian is singular.', RuntimeWarning)
 
         # recalculate steady-state values at each call (setpoint may have changed)
         # compute the steady-state control input and state for the current setpoint

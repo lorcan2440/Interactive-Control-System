@@ -61,3 +61,32 @@ class PlantModel:
 
         y_measured = x[1] + w2
         return y_measured
+    
+    def plant_tf(self, s: complex) -> complex:
+        '''
+        Evaluate the plant's transfer function, G(s).
+        '''
+        K = self.k12 / (self.d * (self.k12 + self.k21 + self.d))  # steadt state gain
+        T1 = 1 / self.d  # slow time constant
+        T2 = 1 / (self.d + self.k12 + self.k21)  # fast time constant
+
+        G = K / ((1 + T1 * s) * (1 + T2 * s))
+        return G
+    
+    def plant_ss_matrices(self) -> tuple[np.ndarray]:
+        '''
+        Return the matrices used in the state space representation of the plant.
+
+        The system dynamics can be written in the form
+
+        dx/dt = A x + B1 w1 + B2 u
+        y = C x + w2
+
+        This function returns (A, B2, C, B1) in that order.
+        '''
+        A = np.array([[-self.k12 - self.d, self.k21], [self.k12, -self.k21 - self.d]])
+        B1 = np.array([[0], [1]])
+        B2 = np.array([[1], [0]])
+        C = np.array([[0, 1]])
+
+        return (A, B2, C, B1)
