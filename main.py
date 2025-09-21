@@ -184,7 +184,7 @@ class Simulation(QWidget):
         # update time domain plots with truncated data
         self.line_y_true.set_xdata(self.t_data)
         self.line_y_true.set_ydata(self.y_true_data)
-        self.line_y_true.set_label('$ y_{true} = $' + f' {self.y_true_data[-1]:.3f}')
+        self.line_y_true.set_label('$ x_2 = $' + f' {self.y_true_data[-1]:.3f}')
         self.line_y_measured.set_xdata(self.t_data)
         self.line_y_measured.set_ydata(self.y_measured_data)
         self.ref_line.set_xdata(self.t_data)
