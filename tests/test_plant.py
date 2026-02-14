@@ -15,7 +15,6 @@ def set_seed():
 def test_init_linear_plant(plant_factory):
 
     # test valid init
-    # create with explicit state-space matrices (Plant no longer supplies defaults)
     A3 = np.eye(3) * -1.0
     B3 = np.zeros((3, 1))
     C3 = np.zeros((1, 3))

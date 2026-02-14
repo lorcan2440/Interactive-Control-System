@@ -41,8 +41,6 @@ def plant():
     - R = [[1.0^2]]  (std.dev 1.0)
     """
     # kept for backward compatibility; prefer using `plant_factory`
-    plant = Plant(dims=2)
-
     A = np.array([[-11.0, 20.0], [10.0, -21.0]])
     B = np.array([[1.0], [0.0]])
     C = np.array([[0.0, 1.0]])
@@ -51,8 +49,7 @@ def plant():
     Q = np.array([[0.0**2, 0.0], [0.0, 1.0**2]])  # noise only in compartment 2
     R = np.array([[1.0**2]])
 
-    plant.set_state_space_matrices(A=A, B=B, C=C, D=D)
-    plant.set_noise_covariances(Q=Q, R=R)
+    plant = Plant(dims=2, A=A, B=B, C=C, D=D, Q=Q, R=R)
     return plant
 
 
@@ -72,8 +69,6 @@ def plant_factory():
     """
 
     def _create(k_12=10, k_21=20, d=1, x_0=None, u_0=None):
-        plant = Plant(dims=2, x_0=x_0, u_0=u_0)
-
         A = np.array([[-(k_12 + d), k_21], [k_12, -(k_21 + d)]])
         B = np.array([[1.0], [0.0]])
         C = np.array([[0.0, 1.0]])
@@ -82,8 +77,7 @@ def plant_factory():
         Q = np.array([[0.0**2, 0.0], [0.0, 1.0**2]])  # noise only in compartment 2
         R = np.array([[1.0**2]])
 
-        plant.set_state_space_matrices(A=A, B=B, C=C, D=D)
-        plant.set_noise_covariances(Q=Q, R=R)
+        plant = Plant(dims=2, x_0=x_0, u_0=u_0, A=A, B=B, C=C, D=D, Q=Q, R=R)
         return plant
 
     return _create
