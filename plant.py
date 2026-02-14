@@ -1,6 +1,5 @@
 # external imports
 import numpy as np
-from matplotlib import pyplot as plt
 
 # local imports
 from utils import get_logger
