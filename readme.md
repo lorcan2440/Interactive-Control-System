@@ -1,6 +1,6 @@
 # Interactive Control System
 
-Uploading Recording 2026-02-14 231741.mp4…
+https://github.com/user-attachments/assets/4b876526-36ec-4d46-a481-f202f1f5bdc2
 
 ## Currently available controllers
 
