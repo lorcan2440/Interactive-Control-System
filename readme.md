@@ -1,21 +1,20 @@
 # Interactive Control System
 
-https://github.com/user-attachments/assets/9ebc596b-dc7c-4065-8524-7f06ba27772c
-
 ## Currently available controllers
 
 - [x] Manual control (choose the control input with your mouse!)
 - [x] Feedforward control (aka open loop control)
 - [x] Bang-bang control (aka on/off control)
 - [x] PID control
-- [x] H2 optimal control (aka LQG control)
+- [ ] H2 optimal control (aka LQG control)
 
 ## Requirements
 
-The only libraries used are NumPy (matrices), SciPy (linear algebra and integration), Matplotlib (plotting) and PyQt6 (GUI). You can install the most up-to-date versions using:
+The libraries required are NumPy, SciPy, PyQt6 and PyQtGraph. 
+You can install the most up-to-date versions using:
 
 ```bash
-pip install numpy scipy matplotlib PyQt6
+pip install numpy scipy PyQt6 pyqtgraph
 ```
 
 or see below for installing specific versions for guaranteed compatability.
@@ -66,8 +65,9 @@ python main.py
 ## Future controllers to be added at some point
 
 - [ ] Lead-lag compensator
-- [ ] Sliding mode control (including boundary layer smoothing)
+- [ ] Sliding mode control (including boundary layer smoothing) - may replace bang-bang
 - [ ] Model predictive control (solve using OSQP)
+- [ ] H2 optimal control (aka LQG control)
 - [ ] H∞ optimal control (solve by either CARE or LMI in CVX)
 - [ ] Neural control (using LSTM)
 - [ ] Reinforcement learning control (using DDPG)
@@ -78,4 +78,3 @@ python main.py
 - [ ] Show the poles of the OLTF L(s) in the complex plane and allow interactive pole placement.
 - [ ] Show a Bode/Nyquist plot of L(s) with the gain/phase margins and allow switching between them.
 - [ ] Add interactive loop-shaping to the lead-lag compensator
-- [ ] Rewrite to run in a browser (no idea how to do this at present... JavaScript? 😭)

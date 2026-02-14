@@ -1,442 +1,321 @@
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QGroupBox, QRadioButton, QCheckBox
+# external imports
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
-from matplotlib.patches import Circle, ArrowStyle, FancyArrowPatch
-from matplotlib.ticker import MultipleLocator, AutoMinorLocator, LogLocator
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, QButtonGroup
+from PyQt6.QtCore import Qt
+from pyqtgraph import GraphicsLayoutWidget, mkPen
 
-from controllers import ControllerType, PlotType
+# local imports
+from controllers import ControllerType
+from utils import make_slider_from_cfg, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
 
 
 class GUI:
-    def __init__(self, simulator):
-        '''
-        The GUI defaults to a two-plot layout, showing the time domain data only.
-        The four-plot layout is triggered by a checkbox in the GUI.
-        '''
 
-        self.simulator = simulator
+    def __init__(self, sim: object):
 
-    def init_two_plot_layout(self):
+        self.sim = sim
+        self.logger = self.sim.logger
 
-        self.layout = QVBoxLayout()  # overall layout: vertical
+        # plotting buffers
+        self.t_data = np.array([])
+        self.x1 = np.array([])
+        self.x2 = np.array([])
+        self.y_meas = np.array([])
+        self.y_sp_data = np.array([])
+        self.u_data = np.array([])
 
-        #### Plot Settings ####
+        # controller UI bookkeeping
+        self.sim.controller_type = ControllerType.MANUAL
+        self.controller_param_widgets = {}
 
-        self.simulator.fig = plt.figure(figsize=(12, 6))  # constrained_layout=True
-        self.simulator.gs = GridSpec(nrows=2, ncols=1, height_ratios=(1, 1), width_ratios=(1,))
-        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0])
-        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1])
+    def init_gui(self):
 
-        self.simulator.canvas = FigureCanvas(self.simulator.fig)
-        self.layout.addWidget(self.simulator.canvas)
+        # build layout onto the Simulation QWidget
+        main_layout = QVBoxLayout()
 
-        self.init_time_domain_data(first=True)
-        
-    def init_time_domain_data(self, first: bool = False):
+        ## 1) top area - graphs
 
-        # initialise plot data for both true and measured outputs
-        if first:
-            self.simulator.t_data = [0]
-            self.simulator.y_true_data = [self.simulator.state_x[1]]  # true output y = x2
-            self.simulator.y_measured_data = [self.simulator.state_x[1]]  # measured output (initially same)
-            self.simulator.u_data = [self.simulator.last_u]
+        self.win = GraphicsLayoutWidget()  # from PyQtGraph
 
-        # output plot with both true and measured signals
-        self.simulator.ax1.set_ylabel("Outputs")
-        self.simulator.line_y_true, = self.simulator.ax1.plot(
-            self.simulator.t_data, self.simulator.y_true_data, 'b-', label="$ x_2 $")
-        self.simulator.line_y_measured, = self.simulator.ax1.plot(
-            self.simulator.t_data, self.simulator.y_measured_data, 'kx', markersize=3, label="$ y = x_2 + w_2 $")
-        self.simulator.ref_line, = self.simulator.ax1.plot(self.simulator.t_data, 
-            [self.simulator.setpoint] * len(self.simulator.t_data), 'r--', label="Setpoint")
-        self.simulator.ax1.legend(loc="lower left")
-        self.simulator.ax1.set_xlim(0, self.simulator.graph_window)
-        self.simulator.ax1.set_ylim(self.simulator.y_lim_minus, self.simulator.y_lim_plus)
+        # states and measurement plot
+        self.plot_x = self.win.addPlot(row=0, col=0, title='States (x)')
+        self.plot_x.addLegend()
+        self.curve_x1 = self.plot_x.plot(pen='r', name='x1')
+        self.curve_x2 = self.plot_x.plot(pen='b', name='x2')
+        self.curve_x1.setVisible(False)
+        self.curve_y_meas = self.plot_x.plot(pen=mkPen('y', width=1), name='y_meas')
+        self.curve_y_sp = self.plot_x.plot(pen=mkPen('m', style=Qt.PenStyle.DashLine), name='y_sp')
 
         # control input plot
-        self.simulator.ax2.set_xlabel("Time")
-        self.simulator.ax2.set_ylabel("Input")
-        self.simulator.line_u, = self.simulator.ax2.plot(self.simulator.t_data, self.simulator.u_data, 'g-', label="$ u $")
-        self.simulator.ax2.legend(loc="lower left")
-        self.simulator.ax2.set_xlim(0, self.simulator.graph_window)
-        self.simulator.ax2.set_ylim(self.simulator.u_lim_minus, self.simulator.u_lim_plus)
+        self.plot_u = self.win.addPlot(row=1, col=0, title='Control input (u)')
+        self.curve_u = self.plot_u.plot(pen='g')
 
-    def init_settings(self):
+        main_layout.addWidget(self.win, stretch=1)
 
-        #### Simulation Settings ####
+        ## 2) first row under graphs - controller selection
 
-        control_layout = QVBoxLayout()
+        # start/stop button
+        first_row_hbox = QHBoxLayout()
+        self.start_stop_button = QPushButton('Start')
+        self.start_stop_button.clicked.connect(self.toggle_start_stop)
+        first_row_hbox.addWidget(self.start_stop_button)
+        first_row_hbox.addStretch()
+
+        # controller selection box
+        controller_buttons_box = QGroupBox('Controller Selection')
+        controller_buttons_box_layout = QHBoxLayout()
+        self.controller_buttons_group = QButtonGroup()
 
         # controller selection radio buttons
-        controller_select_box = QGroupBox("Controller Selection")
-        controller_select_layout = QGridLayout()
-        
-        self.simulator.manual_radio = QRadioButton("Manual Control")
-        self.simulator.openloop_radio = QRadioButton("Open Loop Control")
-        self.simulator.bangbang_radio = QRadioButton("Bang-Bang Control")
-        self.simulator.pid_radio = QRadioButton("PID Control")
-        self.simulator.leadlag_radio = QRadioButton("Lead-Lag Compensator")
-        self.simulator.smc_radio = QRadioButton("Sliding Mode Control")
-        self.simulator.mpc_radio = QRadioButton("Model Predictive Control")
-        self.simulator.h2_radio = QRadioButton("H2 Optimal Control (LQG)")
-        self.simulator.hinf_radio = QRadioButton("H∞ Optimal Control")
-        self.simulator.neural_radio = QRadioButton("Neural Control")
-        self.simulator.rl_radio = QRadioButton("Reinforcement Learning (DDPG)")
+        self.radio_manual = QRadioButton('Manual Control')
+        self.radio_openloop = QRadioButton('Open Loop Control')
+        self.radio_bangbang = QRadioButton('Bang-Bang Control')
+        self.radio_pid = QRadioButton('PID Control')
 
-        # TODO: implement these controllers!
-        self.simulator.leadlag_radio.setDisabled(True)
-        self.simulator.smc_radio.setDisabled(True)
-        self.simulator.mpc_radio.setDisabled(True)
-        self.simulator.hinf_radio.setDisabled(True)
-        self.simulator.neural_radio.setDisabled(True)
-        self.simulator.rl_radio.setDisabled(True)
+        self.controller_buttons_group.addButton(self.radio_manual)
+        self.controller_buttons_group.addButton(self.radio_openloop)
+        self.controller_buttons_group.addButton(self.radio_bangbang)
+        self.controller_buttons_group.addButton(self.radio_pid)
 
-        self.simulator.manual_radio.clicked.connect(self.simulator.on_controller_changed)
-        self.simulator.openloop_radio.clicked.connect(self.simulator.on_controller_changed)
-        self.simulator.bangbang_radio.clicked.connect(self.simulator.on_controller_changed)
-        self.simulator.pid_radio.clicked.connect(self.simulator.on_controller_changed)
-        self.simulator.h2_radio.clicked.connect(self.simulator.on_controller_changed)
-        
-        controller_select_layout.addWidget(self.simulator.manual_radio, 0, 0)
-        controller_select_layout.addWidget(self.simulator.openloop_radio, 0, 1)
-        controller_select_layout.addWidget(self.simulator.bangbang_radio, 0, 2)
-        controller_select_layout.addWidget(self.simulator.pid_radio, 0, 3)
-        controller_select_layout.addWidget(self.simulator.leadlag_radio, 0, 4)
-        controller_select_layout.addWidget(self.simulator.smc_radio, 1, 0)
-        controller_select_layout.addWidget(self.simulator.mpc_radio, 1, 1)
-        controller_select_layout.addWidget(self.simulator.h2_radio, 1, 2)
-        controller_select_layout.addWidget(self.simulator.hinf_radio, 1, 3)
-        controller_select_layout.addWidget(self.simulator.neural_radio, 1, 4)
-        controller_select_layout.addWidget(self.simulator.rl_radio, 1, 5)
+        controller_buttons_box_layout.addWidget(self.radio_manual)
+        controller_buttons_box_layout.addWidget(self.radio_openloop)
+        controller_buttons_box_layout.addWidget(self.radio_bangbang)
+        controller_buttons_box_layout.addWidget(self.radio_pid)
 
-        controller_select_box.setLayout(controller_select_layout)
-        control_layout.addWidget(controller_select_box)
+        controller_buttons_box.setLayout(controller_buttons_box_layout)
+        first_row_hbox.addWidget(controller_buttons_box)
+        main_layout.addLayout(first_row_hbox)
 
-        # horizontal layout for setpoint and noise boxes
-        setpoint_noise_layout = QHBoxLayout()
-        
-        # setpoint control (left side)
-        setpoint_box = QGroupBox("Setpoint (reference)")
-        setpoint_layout = QVBoxLayout()
-
-        self.simulator.setpoint_slider = self.simulator.make_slider_from_cfg('setpoint')
-        self.simulator.setpoint_slider.valueChanged.connect(self.simulator.update_setpoint)
-        self.simulator.setpoint_label = QLabel(f"Setpoint: {self.simulator.setpoint:.2f}")
-        
-        setpoint_layout.addWidget(self.simulator.setpoint_slider)
-        setpoint_layout.addWidget(self.simulator.setpoint_label)
-        setpoint_box.setLayout(setpoint_layout)
-        setpoint_noise_layout.addWidget(setpoint_box)
-
-        # noise control box (right side)
-        noise_box = QGroupBox("Disturbances")
-        noise_layout = QGridLayout()
-        
-        # w1_stddev (process noise)
-        self.simulator.w1_stddev_slider = self.simulator.make_slider_from_cfg('w1_stddev')
-        self.simulator.w1_stddev_slider.valueChanged.connect(self.simulator.update_w1_stddev)
-        self.simulator.w1_stddev_label = QLabel(f"Process Noise (w1): {self.simulator.w1_stddev:.3f}")
-        noise_layout.addWidget(self.simulator.w1_stddev_slider, 0, 0)
-        noise_layout.addWidget(self.simulator.w1_stddev_label, 1, 0)
-        
-        # w2_stddev (measurement noise)
-        self.simulator.w2_stddev_slider = self.simulator.make_slider_from_cfg('w2_stddev')
-        self.simulator.w2_stddev_slider.valueChanged.connect(self.simulator.update_w2_stddev)
-        self.simulator.w2_stddev_label = QLabel(f"Measurement Noise (w2): {self.simulator.w2_stddev:.3f}")
-        noise_layout.addWidget(self.simulator.w2_stddev_slider, 0, 1)
-        noise_layout.addWidget(self.simulator.w2_stddev_label, 1, 1)
-        
-        noise_box.setLayout(noise_layout)
-        setpoint_noise_layout.addWidget(noise_box)
-        
-        # add the horizontal layout to the main control layout
-        control_layout.addLayout(setpoint_noise_layout)
-
-        #### Control Parameters ####
-
-        ### Manual Controls ###
-        self.simulator.manual_box = QGroupBox("Manual Controller Parameters")
-        manual_layout = QVBoxLayout()
-        
-        # Enable/disable checkbox
-        self.simulator.manual_enable_checkbox = QCheckBox("Enable Manual Control")
-        self.simulator.manual_enable_checkbox.setChecked(self.simulator.manual_enabled)
-        self.simulator.manual_enable_checkbox.stateChanged.connect(self.simulator.update_manual_enabled)
-        manual_layout.addWidget(self.simulator.manual_enable_checkbox)
-        
-        # Manual control slider
-        self.simulator.manual_slider = self.simulator.make_slider_from_cfg('manual_u')
-        self.simulator.manual_slider.valueChanged.connect(self.simulator.update_manual_u)
-        self.simulator.manual_label = QLabel(f"Manual Control u: {self.simulator.manual_u:.2f}")
-        manual_layout.addWidget(self.simulator.manual_slider)
-        manual_layout.addWidget(self.simulator.manual_label)
-        
-        self.simulator.manual_box.setLayout(manual_layout)
-        control_layout.addWidget(self.simulator.manual_box)
-
-        ### Open Loop Controls ###
-        # (No settings)
-
-        ### Bang Bang Controls ###
-        self.simulator.bangbang_box = QGroupBox("Bang Bang Controller Parameters")
-        bangbang_layout = QGridLayout()
-
-        # U_minus
-        self.simulator.U_minus_slider = self.simulator.make_slider_from_cfg('U_minus')
-        self.simulator.U_minus_slider.valueChanged.connect(self.simulator.update_U_minus)
-        self.simulator.U_minus_label = QLabel(f"U_minus: {self.simulator.U_minus:.2f}")
-        bangbang_layout.addWidget(self.simulator.U_minus_slider, 0, 0)
-        bangbang_layout.addWidget(self.simulator.U_minus_label, 1, 0)
+        ## 3) second row under graphs - setpoint and disturbances
     
-        # U_plus
-        self.simulator.U_plus_slider = self.simulator.make_slider_from_cfg('U_plus')
-        self.simulator.U_plus_slider.valueChanged.connect(self.simulator.update_U_plus)
-        self.simulator.U_plus_label = QLabel(f"U_plus: {self.simulator.U_plus:.2f}")
-        bangbang_layout.addWidget(self.simulator.U_plus_slider, 0, 1)
-        bangbang_layout.addWidget(self.simulator.U_plus_label, 1, 1)
+        second_hbox = QHBoxLayout()
 
-        self.simulator.bangbang_box.setLayout(bangbang_layout)
-        control_layout.addWidget(self.simulator.bangbang_box)
+        sp_group = QGroupBox('Setpoint (reference)')
+        sp_layout = QVBoxLayout()
+        sp_cfg = GUI_SLIDER_CONFIG['y_sp']
+        container, slider, val_label = make_slider_from_cfg('y_sp', 'Setpoint')
+        slider.valueChanged.connect(self.on_setpoint_slider_changed)
 
-        ### PID Controls ###
-        self.simulator.pid_box = QGroupBox("PID Controller Parameters")
-        pid_layout = QGridLayout()
+        # show descriptive text in the value label for consistency
+        sp = sp_cfg.get('init', sp_cfg['min'])
+        val_label.setText(f"Setpoint: {sp:.2f}")
+        sp_layout.addWidget(container)
+        self.slider = slider
+        self.sp_label = val_label
+        sp_group.setLayout(sp_layout)
+        second_hbox.addWidget(sp_group, stretch=3)
 
-        # Kp
-        self.simulator.Kp_slider = self.simulator.make_slider_from_cfg('Kp')
-        self.simulator.Kp_slider.valueChanged.connect(self.simulator.update_Kp)
-        self.simulator.Kp_label = QLabel(f"Kp: {self.simulator.Kp:.2f}")
-        pid_layout.addWidget(self.simulator.Kp_slider, 0, 0)
-        pid_layout.addWidget(self.simulator.Kp_label, 1, 0)
+        # disturbances
+        dist_box = QGroupBox('Disturbances')
+        dist_layout = QHBoxLayout()
+        w1_cfg = GUI_SLIDER_CONFIG['w_proc_stddev']
+        w2_cfg = GUI_SLIDER_CONFIG['w_meas_stddev']
 
-        # Ki
-        self.simulator.Ki_slider = self.simulator.make_slider_from_cfg('Ki')
-        self.simulator.Ki_slider.valueChanged.connect(self.simulator.update_Ki)
-        self.simulator.Ki_label = QLabel(f"Ki: {self.simulator.Ki:.2f}")
-        pid_layout.addWidget(self.simulator.Ki_slider, 0, 1)
-        pid_layout.addWidget(self.simulator.Ki_label, 1, 1)
+        w1_box = QVBoxLayout()
+        w1_container, w1_slider, w1_val_label = make_slider_from_cfg('w_proc_stddev', 'Process Noise (w_proc)')
+        w1_slider.valueChanged.connect(self.on_w_slider_changed)
+        w1_val_label.setText(f'{w1_cfg.get("init", w1_cfg["min"]):.3f}')
+        w1_box.addWidget(w1_container)
+        self.slider_w1 = w1_slider
+        self.w1_label = w1_val_label
 
-        # Kd
-        self.simulator.Kd_slider = self.simulator.make_slider_from_cfg('Kd')
-        self.simulator.Kd_slider.valueChanged.connect(self.simulator.update_Kd)
-        self.simulator.Kd_label = QLabel(f"Kd: {self.simulator.Kd:.2f}")
-        pid_layout.addWidget(self.simulator.Kd_slider, 0, 2)
-        pid_layout.addWidget(self.simulator.Kd_label, 1, 2)
+        w2_box = QVBoxLayout()
+        w2_container, w2_slider, w2_val_label = make_slider_from_cfg('w_meas_stddev', 'Measurement Noise (w_meas)')
+        w2_slider.valueChanged.connect(self.on_w_slider_changed)
+        w2_val_label.setText(f'{w2_cfg.get("init", w2_cfg["min"]):.3f}')
+        w2_box.addWidget(w2_container)
+        self.slider_w2 = w2_slider
+        self.w2_label = w2_val_label
 
-        self.simulator.pid_box.setLayout(pid_layout)
-        control_layout.addWidget(self.simulator.pid_box)
+        dist_layout.addLayout(w1_box)
+        dist_layout.addLayout(w2_box)
+        dist_box.setLayout(dist_layout)
+        second_hbox.addWidget(dist_box, stretch=4)
 
-        ### H2 Controls ###
-        self.simulator.h2_box = QGroupBox("H2 Controller Parameters")
-        h2_layout = QGridLayout()
+        main_layout.addLayout(second_hbox)
+
+        ## 4) third row under graphs - controller parameters (dynamically generated)
+        self.params_box = QGroupBox('Controller Parameters')
+        self.params_layout = QHBoxLayout()
+        self.params_box.setLayout(self.params_layout)
+        main_layout.addWidget(self.params_box)
+
+        self.sim.setLayout(main_layout)
+
+        # connect controller radio buttons
+        self.radio_manual.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.MANUAL))
+        self.radio_openloop.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.OPENLOOP))
+        self.radio_bangbang.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.BANGBANG))
+        self.radio_pid.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.PID))
+
+        # initial controller selection and params
+        self.radio_manual.setChecked(True)
+        self.sim.manual_u = GUI_SLIDER_CONFIG['manual_u']['init']
+        self.set_controller(ControllerType.MANUAL)
+        self.build_controller_params(ControllerType.MANUAL)
+
+    def update_plots(self, t_span: np.ndarray, x_span: np.ndarray, y_meas: np.ndarray):
+        # t_span: array of times for this frame. Shape: (n,)
+        # x_span: state trajectory for this frame. Shape: (2, n)
+        # y_meas: latest measurement. Shape: (1, 1)
+
+        # compute setpoint numeric value
+        sp_cfg = GUI_SLIDER_CONFIG['y_sp']
+        y_sp_val = sp_cfg['min'] + int(self.slider.value()) * sp_cfg['step']
+
+        # u used during this frame (constant across this frame)
+        u_last = float(self.sim.plant.u.item())
+
+        # current measured output (scalar)
+        y_last = float(y_meas.item())
+
+        if self.t_data.size == 0:
+            # first frame: take full time span and states
+            u_0, y_0 = self.sim.plant.u_0.item(), self.sim.y_0.item()
+            self.t_data = t_span.copy()  # shape: (n,)
+            self.x1 = x_span[0, :].copy()  # shape: (n,)
+            self.x2 = x_span[1, :].copy()  # shape: (n,)
+            self.t_meas = np.array([float(t_span[0]), float(t_span[-1])])  # shape: (2,)
+            self.y_meas = np.array([y_0, y_last])  # shape: (2,)
+            self.u_data = np.full(self.t_data.shape, u_0)  # shape: (n,)
+            self.y_sp_data = np.full(self.t_data.shape, y_sp_val)  # shape: (n,)
+        else:
+            # subsequent frames: append times and state trajectory for this frame 
+            # (skip first sample to avoid duplication)
+            self.t_data = np.hstack((self.t_data, t_span[1:]))
+            self.x1 = np.hstack((self.x1, x_span[0, 1:]))
+            self.x2 = np.hstack((self.x2, x_span[1, 1:]))
+            self.t_meas = np.hstack((self.t_meas, float(t_span[-1])))
+            self.y_meas = np.hstack((self.y_meas, y_last))
+            self.u_data = np.hstack((self.u_data, np.full(t_span.shape[0] - 1, u_last)))
+            self.y_sp_data = np.hstack((self.y_sp_data, np.full(t_span.shape[0] - 1, y_sp_val)))
         
-        # C1_1
-        self.simulator.C1_1_slider = self.simulator.make_slider_from_cfg('C1_1')
-        self.simulator.C1_1_slider.valueChanged.connect(self.simulator.update_C1_1)
-        self.simulator.C1_1_label = QLabel(f"C1_1 (performance gain of x_1): {self.simulator.C1_1:.2f}")
-        h2_layout.addWidget(self.simulator.C1_1_slider, 0, 0)
-        h2_layout.addWidget(self.simulator.C1_1_label, 1, 0)
+        # apply sliding window: truncate arrays
+        # retain only entries where mask is True (in the window)
+        if self.t_data.size > 0:
+            mask_data_in_window = (self.t_data >= self.t_data[-1] - self.sim.dt_window)
+            mask_meas_in_window = (self.t_meas >= self.t_meas[-1] - self.sim.dt_window)
+            self.t_data = self.t_data[mask_data_in_window]
+            self.t_meas = self.t_meas[mask_meas_in_window]
+            self.x1 = self.x1[mask_data_in_window]
+            self.x2 = self.x2[mask_data_in_window]
+            self.u_data = self.u_data[mask_data_in_window]
+            self.y_sp_data = self.y_sp_data[mask_data_in_window]
+            self.y_meas = self.y_meas[mask_meas_in_window]
+
+        # update curves
+        self.curve_x1.setData(self.t_data, self.x1)
+        self.curve_x2.setData(self.t_data, self.x2)
+        self.curve_y_meas.setData(self.t_meas, self.y_meas)
+        self.curve_y_sp.setData(self.t_data, self.y_sp_data)
+        self.curve_u.setData(self.t_data, self.u_data)
+
+    ## UI callbacks
+
+    def toggle_start_stop(self):
+        # toggle the simulation timer on and off
+        if not self.sim.running:  # start
+            self.sim.timer.start(int(self.sim.dt_anim * 1000))
+            self.sim.running = True
+            self.start_stop_button.setText('Stop')
+        else:  # stop
+            self.sim.timer.stop()
+            self.sim.running = False
+            self.start_stop_button.setText('Start')
+
+    def on_setpoint_slider_changed(self, val: int):
+        # update setpoint based on slider value
+        cfg = GUI_SLIDER_CONFIG['y_sp']
+        sp = cfg['min'] + val * cfg['step']
+        self.sp_label.setText(f'{sp:.2f}')
+        self.sim.y_sp = np.array([[sp]])
+
+    def on_w_slider_changed(self, _val: int):
+        # update both plant noise covariances
+
+        # w1: process noise stddev
+        cfg_w1 = GUI_SLIDER_CONFIG['w_proc_stddev']
+        w1_sigma = cfg_w1['min'] + int(self.slider_w1.value()) * cfg_w1['step']
+        self.w1_label.setText(f'{w1_sigma:.3f}')
+
+        # w2: measurement noise stddev
+        cfg_w2 = GUI_SLIDER_CONFIG['w_meas_stddev']
+        w2_sigma = cfg_w2['min'] + int(self.slider_w2.value()) * cfg_w2['step']
+        self.w2_label.setText(f'{w2_sigma:.3f}')
+
+        Q = np.array([[w1_sigma**2, 0.0], [0.0, w1_sigma**2]])
+        R = np.array([[w2_sigma**2]])
+
+        self.sim.plant.set_noise_covariances(Q=Q, R=R)
+
+    def on_controller_selected(self, controller_type: ControllerType):
+        if controller_type is not self.sim.controller_type:
+            self.sim.controller_type = controller_type
+            self.set_controller(controller_type)
+            self.build_controller_params(controller_type)
+
+    def add_param(self, key: str, display_name: str = None):
+        # helper: create a controller parameter slider row
+        container, slider, val_label = make_slider_from_cfg(key, display_name)
+        slider.valueChanged.connect(lambda v, k=key: self.on_controller_param_changed(k, v))
+        self.params_layout.addWidget(container)
+        self.controller_param_widgets[key] = (slider, val_label)
+
+    def build_controller_params(self, controller_type: ControllerType):
         
-        # C1_2
-        self.simulator.C1_2_slider = self.simulator.make_slider_from_cfg('C1_2')
-        self.simulator.C1_2_slider.valueChanged.connect(self.simulator.update_C1_2)
-        self.simulator.C1_2_label = QLabel(f"C1_2 (performance gain of x_2): {self.simulator.C1_2:.2f}")
-        h2_layout.addWidget(self.simulator.C1_2_slider, 0, 1)
-        h2_layout.addWidget(self.simulator.C1_2_label, 1, 1)
-        
-        self.simulator.h2_box.setLayout(h2_layout)
-        control_layout.addWidget(self.simulator.h2_box)
+        # clear current controller params box
+        while self.params_layout.count():
+            item = self.params_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.controller_param_widgets.clear()
 
-        ### Secondary plot settings ###
-        self.simulator.secondary_plot_settings_box = QGroupBox("Add plot")
-        secondary_plot_layout = QHBoxLayout()
-        self.simulator.secondary_plot_settings_box.setLayout(secondary_plot_layout)
-        control_layout.addWidget(self.simulator.secondary_plot_settings_box)
-
-        self.simulator.secondary_off_radio = QRadioButton("Hide")
-        self.simulator.bode_radio = QRadioButton("Bode plots")
-        self.simulator.nyquist_radio = QRadioButton("Nyquist plot")
-        self.simulator.nichols_radio = QRadioButton("Nichols plot")
-        self.simulator.root_locus_radio = QRadioButton("Root locus plot")
-
-        self.simulator.secondary_off_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
-        self.simulator.bode_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
-        self.simulator.nyquist_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
-        self.simulator.nichols_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
-        self.simulator.root_locus_radio.clicked.connect(self.simulator.on_secondary_plot_changed)
-
-        secondary_plot_layout.addWidget(self.simulator.secondary_off_radio)
-        secondary_plot_layout.addWidget(self.simulator.bode_radio)
-        secondary_plot_layout.addWidget(self.simulator.nyquist_radio)
-        secondary_plot_layout.addWidget(self.simulator.nichols_radio)
-        secondary_plot_layout.addWidget(self.simulator.root_locus_radio)
-
-        ### Set starting object states
-
-        self.simulator.manual_box.setVisible(True)  # the manual box is shown first, others hidden
-        self.simulator.h2_box.setVisible(False)
-        self.simulator.pid_box.setVisible(False)
-        
-        self.simulator.secondary_plot_settings_box.setVisible(False)
-
-        # set controller radio button type
-        match self.simulator.controller_type:
+        match controller_type:
             case ControllerType.MANUAL:
-                self.simulator.manual_radio.setChecked(True)
+                self.add_param('manual_u', 'Manual u')
             case ControllerType.OPENLOOP:
-                self.simulator.openloop_radio.setChecked(True)
+                lbl = QLabel('Open-loop controller: no parameters')
+                self.params_layout.addWidget(lbl)
             case ControllerType.BANGBANG:
-                self.simulator.bangbang_radio.setChecked(True)
+                self.add_param('U_minus', 'U_minus')
+                self.add_param('U_plus', 'U_plus')
             case ControllerType.PID:
-                self.simulator.pid_radio.setChecked(True)
-            case ControllerType.H2:
-                self.simulator.h2_radio.setChecked(True)
+                self.add_param('K_p', 'K_p')
+                self.add_param('K_i', 'K_i')
+                self.add_param('K_d', 'K_d')
 
-        self.simulator.secondary_off_radio.setChecked(True)
+        # set slider positions to current values
+        for key, (slider, val_label) in self.controller_param_widgets.items():
+            cfg = GUI_SLIDER_CONFIG[key]
+            current_val = float(getattr(self.sim, key, cfg.get('init', cfg['min'])))
+            pos = int(round((current_val - cfg['min']) / cfg['step']))
+            pos = min(max(pos, 0), int(round((cfg['max'] - cfg['min']) / cfg['step'])))
+            slider.setValue(pos)
+            val_label.setText(f"{current_val:.2f}")
+
+    def on_controller_param_changed(self, key: str, int_pos: int):
+        cfg = GUI_SLIDER_CONFIG[key]
+        if cfg is None:
+            return
+        val = cfg['min'] + int_pos * cfg['step']
+        _, val_label = self.controller_param_widgets.get(key, (None, None))
+        if val_label is not None:
+            val_label.setText(f"{val:.2f}")
+
+        if key in CONTROLLER_PARAMS_LIST:
+            setattr(self.sim, key, val)
         
-        self.simulator.update_manual_slider_state()  # enable/disable manual slider based on checkbox
-        self.simulator.plot_type = PlotType.HIDE
+    def set_controller(self, controller_type: ControllerType):
+        # set the simulation controller type
+        match controller_type:
+            case ControllerType.MANUAL:
+                self.sim.controller_type = ControllerType.MANUAL
+            case ControllerType.BANGBANG:
+                self.sim.controller_type = ControllerType.BANGBANG
+            case ControllerType.OPENLOOP:
+                self.sim.controller_type = ControllerType.OPENLOOP
+            case ControllerType.PID:
+                self.sim.controller_type = ControllerType.PID
+                self.sim.pid_controller.error_integrated = np.array([[0.0]])
 
-        self.layout.addLayout(control_layout)
-        self.simulator.setLayout(self.layout)
-
-        self.simulator.on_controller_changed()
-
-        self.simulator.showMaximized()
-
-    def show_controller_settings_box(self, controller_type: ControllerType):
-        '''
-        Show the boxes for a given controller type while hiding all others.
-        '''
-        type_to_obj = {ControllerType.MANUAL: self.simulator.manual_box,
-                       ControllerType.OPENLOOP: None,
-                       ControllerType.BANGBANG: self.simulator.bangbang_box,
-                       ControllerType.PID: self.simulator.pid_box,
-                       ControllerType.H2: self.simulator.h2_box}
-        
-        for c in type_to_obj:
-            if controller_type is c and type_to_obj[c] is not None:
-                type_to_obj[c].setVisible(True)
-            elif controller_type is not c and type_to_obj[c] is not None:
-                type_to_obj[c].setVisible(False)
-
-    def del_plots(self, keep_time_domain_only: bool = False):
-
-        self.simulator.fig.delaxes(self.simulator.ax1)
-        self.simulator.fig.delaxes(self.simulator.ax2)
-
-        if hasattr(self.simulator, 'ax3'):
-            self.simulator.fig.delaxes(self.simulator.ax3)
-            delattr(self.simulator, 'ax3')
-            
-        if hasattr(self.simulator, 'ax4'):
-            self.simulator.fig.delaxes(self.simulator.ax4)
-            delattr(self.simulator, 'ax4')
-
-        if keep_time_domain_only:
-            self.simulator.gs = GridSpec(nrows=2, ncols=1, height_ratios=(1, 1), width_ratios=(1,))
-            self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0])
-            self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1])
-
-            self.init_time_domain_data()
-
-    def init_bode_plot(self):
-
-        self.del_plots()
-
-        self.simulator.gs = GridSpec(nrows=2, ncols=2, height_ratios=(1, 1), width_ratios=(1, 1))
-        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0, 0])
-        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1, 0])
-        self.simulator.ax3 = self.simulator.fig.add_subplot(self.simulator.gs[0, 1])
-        self.simulator.ax4 = self.simulator.fig.add_subplot(self.simulator.gs[1, 1])
-        
-        self.init_time_domain_data()
-
-        self.simulator.oltf_data = np.ones_like(self.simulator.freq_range)  # L(jω)
-
-        self.simulator.ax3.set_ylabel(r'Gain, $ 20 \ log_{10} | L(j \omega) | $ / dB')
-        self.simulator.line_bode_gain, = self.simulator.ax3.semilogx(
-            self.simulator.freq_range, 20 * np.log10(np.abs(self.simulator.oltf_data)), 'r', label='OLTF')
-        self.simulator.ax3.legend(loc='upper right')
-        self.simulator.ax3.set_xlim(self.simulator.freq_min, self.simulator.freq_max)
-        self.simulator.ax3.set_ylim(-60, 60)
-        self.simulator.ax3.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(0.1, 1.0) * 0.1, numticks=10))
-        self.simulator.ax3.yaxis.set_major_locator(MultipleLocator(base=20))
-        self.simulator.ax3.yaxis.set_minor_locator(AutoMinorLocator(n=5))
-
-        self.simulator.ax4.set_xlabel(r'Frequency, $ \omega $ / $ rad/s $')
-        self.simulator.ax4.set_ylabel(r'Phase, $ \angle \ L(j \omega) $ / $ ^{\circ} $')
-        self.simulator.line_bode_phase, = self.simulator.ax4.semilogx(
-            self.simulator.freq_range, np.angle(self.simulator.oltf_data, deg=True), 'r', label='OLTF')
-        self.simulator.ax4.legend(loc='upper right')
-        self.simulator.ax4.set_xlim(self.simulator.freq_min, self.simulator.freq_max)
-        self.simulator.ax4.set_ylim(-200, 150)
-        self.simulator.ax4.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(1.0, 10.0) * 0.1, numticks=10))
-        self.simulator.ax4.yaxis.set_major_locator(MultipleLocator(base=45))
-        self.simulator.ax4.yaxis.set_minor_locator(AutoMinorLocator(n=3))
-
-    def init_nyquist_plot(self):
-        
-        self.del_plots()
-
-        self.simulator.gs = GridSpec(nrows=2, ncols=2, height_ratios=(1, 1), width_ratios=(1, 1))
-        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0, 0])
-        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1, 0])
-        self.simulator.ax3 = self.simulator.fig.add_subplot(self.simulator.gs[:, 1])
-
-        self.init_time_domain_data()
-
-        self.simulator.oltf_data = np.ones_like(self.simulator.freq_range)  # L(jω)
-        self.simulator.ax3.set_xlabel(r'$ Re \ L(j \omega) $')
-        self.simulator.ax3.set_ylabel(r'$ Im \ L(j \omega) $')
-        self.simulator.line_nyquist_plus, = self.simulator.ax3.plot(
-            np.real(self.simulator.oltf_data), np.imag(self.simulator.oltf_data), color='blue')
-        self.simulator.line_nyquist_minus, = self.simulator.ax3.plot(
-            np.real(self.simulator.oltf_data), np.imag(self.simulator.oltf_data), color='orange')
-        circle = Circle((0, 0), 1, color='k', linestyle='dashdot', fill=False)
-        self.simulator.ax3.plot(-1, 0, color='k', marker='o', markersize=4)
-        self.simulator.ax3.add_patch(circle)
-        self.simulator.ax3.set_aspect('equal')
-
-        self.simulator.circle_nyquist_plus = Circle(xy=(0, 0), radius=0.04,
-            color='blue', label=r'$ \omega = 1 $')
-        self.simulator.circle_nyquist_minus = Circle(xy=(0, 0), radius=0.04,
-            color='orange', label=r'$ \omega = -1 $')
-        
-        self.simulator.ax3.add_patch(self.simulator.circle_nyquist_plus)
-        self.simulator.ax3.add_patch(self.simulator.circle_nyquist_minus)
-
-    def init_nichols_plot(self):
-        
-        self.del_plots()
-
-        self.simulator.gs = GridSpec(nrows=2, ncols=2, height_ratios=(1, 1), width_ratios=(1, 1))
-        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0, 0])
-        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1, 0])
-        self.simulator.ax3 = self.simulator.fig.add_subplot(self.simulator.gs[:, 1])
-
-        self.init_time_domain_data()
-
-        self.simulator.oltf_data = np.ones_like(self.simulator.freq_range)  # L(jω)
-        self.simulator.ax3.set_xlabel(r'Phase, $ \angle \ L(j \omega) $ / $ ^{\circ} $')
-        self.simulator.ax3.set_ylabel(r'Gain, $ 20 \ log_{10} | L(j \omega) | $ / dB')
-
-        self.simulator.line_nichols, = self.simulator.ax3.plot(
-            np.angle(self.simulator.oltf_data, deg=True), 20 * np.log10(np.abs(self.simulator.oltf_data)),
-            'r', label='OLTF')
-        
-        self.simulator.ax3.set_xlim(-200, 150)
-        self.simulator.ax3.set_ylim(-60, 60)
-
-    def init_root_locus_plot(self):
-        
-        self.del_plots()
-
-        self.simulator.gs = GridSpec(nrows=2, ncols=2, height_ratios=(1, 1), width_ratios=(1, 1))
-        self.simulator.ax1 = self.simulator.fig.add_subplot(self.simulator.gs[0, 0])
-        self.simulator.ax2 = self.simulator.fig.add_subplot(self.simulator.gs[1, 0])
-        self.simulator.ax3 = self.simulator.fig.add_subplot(self.simulator.gs[:, 1])
-
-        self.init_time_domain_data()

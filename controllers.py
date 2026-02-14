@@ -1,8 +1,11 @@
+# built-ins
 from enum import Enum, auto
-import warnings
 
+# external imports
 import numpy as np
-from scipy.linalg import solve_continuous_are, solve_continuous_lyapunov
+
+# local imports
+from utils import get_logger
 
 
 class ControllerType(Enum):
@@ -10,19 +13,6 @@ class ControllerType(Enum):
     OPENLOOP = auto()
     BANGBANG = auto()
     PID = auto()
-    H2 = auto()
-    
-    def __str__(self):
-        """Return the string representation for display purposes"""
-        return self.name
-    
-
-class PlotType(Enum):
-    HIDE = auto()
-    BODE = auto()
-    NYQUIST = auto()
-    NICHOLS = auto()
-    ROOTLOCUS = auto()
     
     def __str__(self):
         """Return the string representation for display purposes"""
@@ -30,65 +20,62 @@ class PlotType(Enum):
 
 
 class ManualController:
-    def __init__(self, simulator, plant):
+    def __init__(self, sim: object = None, plant: object = None):
         '''
         The manual controller allows the user to directly specify the control input.
-        No computations are performed; only the slider value is read from the GUI and applied to the plant.
+        No computations are performed; the controller simply returns the GUI slider `manual_u` value.
         '''
-        self.simulator = simulator
+        self.sim = sim
         self.plant = plant
-    
-    def calc_u(self) -> float:
+
+    def calc_u(self) -> np.ndarray:
         '''
-        Calculates the control input for a manual controller.
-        This function reads from the slider in the GUI.
-        
+        Calculate the control input for manual control. Ignores measurements and returns
+        the GUI slider `manual_u`.
+
         ### Returns
-        - `float`: the control input.
+        - `u`: control input. Shape: (1, 1)
         '''
-        if self.simulator.manual_enabled:
-            u = self.simulator.manual_u
-        else:
-            u = 0.0
-            
-        self.simulator.last_u = u
-        return u
+        return np.array([[float(self.sim.manual_u)]])
 
 
 class OpenLoopController:
-    def __init__(self, simulator, plant):
+    def __init__(self, sim: object = None, plant: object = None):
         '''
         An open-loop controller (aka feedforward controller) is a simple control law whose control input
         is proportional to the reciprocal of the steady-state gain of the plant.
         
         There is no measuring of the output i.e. no feedback, the block diagram is 'open': 
         the control input depends only on the setpoint.
-        The controller response time is limited by the dynamics of the plant.
+        The controller response time is determined solely by the dynamics of the plant.
         In the complete absence of disturbances, the steady-state error will be zero.
         '''
-        self.simulator = simulator
+        self.sim = sim
         self.plant = plant
+        self.logger = get_logger()
 
-    def calc_u(self) -> float:
+        self.G = lambda s: plant.C @ np.linalg.inv(s * np.eye(plant.dims) - plant.A) @ plant.B + plant.D
+        self.ss_gain = self.G(0)  # steady state gain of plant in open-loop conditions = G(0)
+
+    def calc_u(self) -> np.ndarray:
         '''
         Calculates the control input for an open-loop (feedforward) controller.
         This depends only on the current setpoint.
-        
+
         ### Returns
-        - `float`: the control input.
+        - `u`: control input. Shape: (1, 1)
         '''
-        y_sp = self.simulator.setpoint
 
-        # steady state gain of plant in open-loop conditions = G(0)
-        plant_ss_gain = self.plant.k12 / (self.plant.d * (self.plant.d + self.plant.k12 + self.plant.k21))
+        # get setpoint
+        y_sp = self.sim.y_sp
 
-        u = y_sp / plant_ss_gain
-        self.simulator.last_u = u
+        # compute control input
+        u = y_sp / self.ss_gain
         return u
 
 
 class BangBangController:
-    def __init__(self, simulator, plant):
+    def __init__(self, sim: object = None, plant: object = None):
         '''
         A bang-bang controller (aka 'on-off controller') only has two possible control inputs:
 
@@ -100,111 +87,73 @@ class BangBangController:
         This type of controller resembles how a thermostat works. It can lead to chattering (rapid changes of u) 
         near the setpoint if there is measurement noise and/or if the plant process dynamics are fast.
         '''
-        self.simulator = simulator
+        self.sim = sim
         self.plant = plant
 
-    def calc_u(self, e: float) -> float:
+    def calc_u(self, e: np.ndarray) -> np.ndarray:
         '''
         Calculates the control input for a bang-bang (on-off) controller.
         Depending on the sign of `e`, one of two discrete control inputs are chosen.
         
         ### Arguments
-        - `e` (float): the error, given by y_setpoint - y_measured.
-        
-        ### Returns
-        - `float`: the control input.
-        '''        
-        if e > 0:
-            u = self.simulator.U_plus
-        elif e < 0:
-            u = self.simulator.U_minus
-        else:
-            u = 0
+        - `e`: error (difference in y: setpoint minus measurement). Shape: (1, 1)
 
-        self.simulator.last_u = u
+        ### Returns
+        - `u`: control input. Shape: (1, 1)
+        '''
+
+        # compute control input
+        if e > 0:
+            u = np.array([[self.sim.U_plus]])
+        elif e < 0:
+            u = np.array([[self.sim.U_minus]])
+        else:
+            u = np.array([[0.0]])
         return u
 
 
 class PIDController:
-    def __init__(self, simulator, plant):
-        '''
-        A PID controller performs three separate operations on the error signal:
-
-        1) P (proportional): multiplies the error by the parameter Kp
-        2) I (integral): integrates the error over all previous values and multiplies by the parameter Ki
-        3) D (derivative): computes the rate of change of the error and multiplies by the parameter Kd
-
-        The controller gain parameters Kp, Ki and Kd determine the relative weighting of each contribution.
-        These are set by sliders in the GUI.
-
-        - A larger Kp tends to give faster responses and a smaller steady state error
-        (though Kp alone can typically not eliminate a steady state error)
-
-        - A larger Ki tends to eliminate the steady state error faster
-        (though it can lead to oscillations in the step response or even instability if too large)
-
-        - A larger Kd tends to smooth out the oscillations caused by Ki
-        (though it can cause noise in the input).
-        '''
-
-        self.simulator = simulator
+    def __init__(self, sim: object = None, plant: object = None):
+        self.sim = sim
         self.plant = plant
 
-        self.reset_memory()
+        self.error_prev = np.array([[0.0]])
+        self.error_integrated = np.array([[0.0]])
 
-    def reset_memory(self):
-        self.integral = 0.0
-        self.prev_error = 0.0
-
-    def controller_tf(self, s: complex) -> complex:
+    def calc_u(self, e: np.ndarray) -> np.ndarray:
         '''
-        Evaluate the controller's transfer function, K(s).
-        '''
-        Kp = self.simulator.Kp
-        Ki = self.simulator.Ki
-        Kd = self.simulator.Kd
+        Calculate the control input `u` based on the error `e`.
 
-        K = Kp + Ki / s + Kd * s
-
-        return K
-    
-    def open_loop_tf(self, s: complex) -> complex:
-        '''
-        Evaluate the open-loop transfer function (OLTF, aka return ratio), L(s), 
-        for when the plant is controlled by the PID controller.
-
-        The OLTF satisfies L(s) = K(s) G(s), where K(s) is the controller TF and G(s) is the plant TF.
-        '''
-
-        return self.controller_tf(s) * self.plant.plant_tf(s)
-
-    def calc_u(self, e: float) -> float:
-        '''
-        Calculates the control input for a PID controller.
-        
         ### Arguments
-        - `e` (float): the error, given by y_setpoint - y_measured.
-        
+        - `e`: error (difference in y: setpoint minus measurement). Shape: (1, 1)
+
         ### Returns
-        - `float`: the control input
-        '''        
+        - `u`: control input. Shape: (1, 1)
+        '''
+        if not isinstance(e, np.ndarray) or e.shape != (1, 1):
+            raise ValueError('Error must be a single-element np.ndarray with shape (1, 1).')
+        
+        # get proportional component
+        u_p = self.sim.K_p * e
 
-        # proportional signal
-        u_p = self.simulator.Kp * e
-        # integral signal (trapezium rule)
-        self.integral += 1/2 * (e + self.prev_error) * self.simulator.solver_dt
-        u_i = self.simulator.Ki * self.integral
-        # derivative signal
-        derivative = (e - self.prev_error) / self.simulator.solver_dt
-        u_d = self.simulator.Kd * derivative
+        # get integral component
+        self.error_integrated += e * self.sim.dt_anim  # right rectangular method
+        u_i = self.sim.K_i * self.error_integrated
 
-        # control input
+        # get derivative component
+        e_derivative = (e - self.error_prev) / self.sim.dt_anim  # backward difference method
+        u_d = self.sim.K_d * e_derivative
+
+        # update previous error
+        self.error_prev = e
+
+        # compute control input
         u = u_p + u_i + u_d
-
-        self.prev_error = e
-        self.simulator.last_u = u
         return u
 
+"""
+# NOTE: this still uses the old interface - need to update - leave out for now
+# TODO: rebuilt from first principles - do not just copy the below, as there are some suspcious results
 
 class H2Controller:
 
@@ -355,3 +304,4 @@ class H2Controller:
 
         self.simulator.last_u = u
         return u
+"""
