@@ -7,15 +7,16 @@ from pyqtgraph import GraphicsLayoutWidget, mkPen
 
 # local imports
 from controllers import ControllerType
-from utils import make_slider_from_cfg, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
+from utils import make_slider_from_cfg, MAX_SIG_FIGS, ANIM_SPEED_FACTOR, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
 
 
 class GUI:
 
-    def __init__(self, sim: object):
+    def __init__(self, sim: object, dump_logs_on_stop: bool = False):
 
         self.sim = sim
         self.logger = self.sim.logger
+        self.dump_logs_on_stop = dump_logs_on_stop
 
         # plotting buffers
         self.t_data = np.array([])
@@ -24,6 +25,11 @@ class GUI:
         self.y_meas = np.array([])
         self.y_sp_data = np.array([])
         self.u_data = np.array([])
+
+        # buffer size constants - rounding accounts for cases when time steps are not multiples of each other
+        self.n_int_per_frame = int(np.ceil(round(self.sim.dt_anim / self.sim.dt_int, MAX_SIG_FIGS))) + 1
+        self.n_frame_per_window = int(np.ceil(round(self.sim.dt_window / self.sim.dt_anim, MAX_SIG_FIGS))) + 1
+        self.n_int_per_window = int(np.ceil(round(self.sim.dt_window / self.sim.dt_int, MAX_SIG_FIGS))) + 1
 
         # controller UI bookkeeping
         self.sim.controller_type = ControllerType.MANUAL
@@ -39,17 +45,21 @@ class GUI:
         self.win = GraphicsLayoutWidget()  # from PyQtGraph
 
         # states and measurement plot
-        self.plot_x = self.win.addPlot(row=0, col=0, title='States (x)')
+        self.plot_x = self.win.addPlot(row=0, col=0, title='States (x), Measurement (y_meas) and Setpoint (y_sp)')
         self.plot_x.addLegend()
         self.curve_x1 = self.plot_x.plot(pen='r', name='x1')
         self.curve_x2 = self.plot_x.plot(pen='b', name='x2')
         self.curve_x1.setVisible(False)
-        self.curve_y_meas = self.plot_x.plot(pen=mkPen('y', width=1), name='y_meas')
-        self.curve_y_sp = self.plot_x.plot(pen=mkPen('m', style=Qt.PenStyle.DashLine), name='y_sp')
+        self.curve_y_meas = self.plot_x.plot(
+            stepMode='left', pen=None, symbol='o', symbolPen=mkPen('y'), symbolSize=4, symbolBrush=0.2, name='y_meas')
+        self.curve_y_sp = self.plot_x.plot(
+            stepMode='left', pen=mkPen('m', style=Qt.PenStyle.DashLine), name='y_sp')
+        self.plot_x.setAutoVisible(x=False)  # turn off x-axis auto-scaling
 
         # control input plot
         self.plot_u = self.win.addPlot(row=1, col=0, title='Control input (u)')
-        self.curve_u = self.plot_u.plot(pen='g')
+        self.curve_u = self.plot_u.plot(stepMode='left', pen='g')
+        self.plot_u.setAutoVisible(x=False)  # turn off x-axis auto-scaling
 
         main_layout.addWidget(self.win, stretch=1)
 
@@ -144,6 +154,7 @@ class GUI:
         self.sim.setLayout(main_layout)
 
         # connect controller radio buttons
+        # HACK: on_controller_selected(...) is only run if button is toggled on
         self.radio_manual.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.MANUAL))
         self.radio_openloop.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.OPENLOOP))
         self.radio_bangbang.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.BANGBANG))
@@ -178,49 +189,55 @@ class GUI:
             self.x2 = x_span[1, :].copy()  # shape: (n,)
             self.t_meas = np.array([float(t_span[0]), float(t_span[-1])])  # shape: (2,)
             self.y_meas = np.array([y_0, y_last])  # shape: (2,)
-            self.u_data = np.full(self.t_data.shape, u_0)  # shape: (n,)
-            self.y_sp_data = np.full(self.t_data.shape, y_sp_val)  # shape: (n,)
+            self.u_data = np.array([u_0, u_0])  # shape: (2,)
+            self.y_sp_data = np.array([y_sp_val, y_sp_val])  # shape: (2,)
         else:
-            # subsequent frames: append times and state trajectory for this frame 
-            # (skip first sample to avoid duplication)
-            self.t_data = np.hstack((self.t_data, t_span[1:]))
-            self.x1 = np.hstack((self.x1, x_span[0, 1:]))
-            self.x2 = np.hstack((self.x2, x_span[1, 1:]))
-            self.t_meas = np.hstack((self.t_meas, float(t_span[-1])))
-            self.y_meas = np.hstack((self.y_meas, y_last))
-            self.u_data = np.hstack((self.u_data, np.full(t_span.shape[0] - 1, u_last)))
-            self.y_sp_data = np.hstack((self.y_sp_data, np.full(t_span.shape[0] - 1, y_sp_val)))
+            # subsequent frames: append times and state trajectory for this frame
+            # get indices to retain from previous data (within the window)
+            i_data = max(0, self.t_data.size - self.n_int_per_window + self.n_int_per_frame - 1)
+            i_meas = max(0, self.t_meas.size - self.n_frame_per_window + 1)
+            # append new data (skip first value of most recent frame to avoid duplication)
+            self.t_data = np.concatenate((self.t_data[i_data:], t_span[1:]), axis=0)
+            self.x1 = np.concatenate((self.x1[i_data:], x_span[0, 1:]), axis=0)
+            self.x2 = np.concatenate((self.x2[i_data:], x_span[1, 1:]), axis=0)
+            self.t_meas = np.concatenate((self.t_meas[i_meas:], np.array([float(t_span[-1])])), axis=0)
+            self.y_meas = np.concatenate((self.y_meas[i_meas:], np.array([y_last])), axis=0)
+            self.u_data = np.concatenate((self.u_data[i_meas:], np.array([u_last])), axis=0)
+            self.y_sp_data = np.concatenate((self.y_sp_data[i_meas:], np.array([y_sp_val])), axis=0)
         
-        # apply sliding window: truncate arrays
-        # retain only entries where mask is True (in the window)
-        if self.t_data.size > 0:
-            mask_data_in_window = (self.t_data >= self.t_data[-1] - self.sim.dt_window)
-            mask_meas_in_window = (self.t_meas >= self.t_meas[-1] - self.sim.dt_window)
-            self.t_data = self.t_data[mask_data_in_window]
-            self.t_meas = self.t_meas[mask_meas_in_window]
-            self.x1 = self.x1[mask_data_in_window]
-            self.x2 = self.x2[mask_data_in_window]
-            self.u_data = self.u_data[mask_data_in_window]
-            self.y_sp_data = self.y_sp_data[mask_data_in_window]
-            self.y_meas = self.y_meas[mask_meas_in_window]
-
         # update curves
         self.curve_x1.setData(self.t_data, self.x1)
         self.curve_x2.setData(self.t_data, self.x2)
         self.curve_y_meas.setData(self.t_meas, self.y_meas)
-        self.curve_y_sp.setData(self.t_data, self.y_sp_data)
-        self.curve_u.setData(self.t_data, self.u_data)
+        self.curve_y_sp.setData(self.t_meas, self.y_sp_data)
+        self.curve_u.setData(self.t_meas, self.u_data)
+
+        # update x-axis ranges
+        self.plot_x.setXRange(max(0, self.t_data[-1] - self.sim.dt_window), max(self.sim.dt_window, self.t_data[-1]))
+        self.plot_u.setXRange(max(0, self.t_data[-1] - self.sim.dt_window), max(self.sim.dt_window, self.t_data[-1]))
 
     ## UI callbacks
 
     def toggle_start_stop(self):
-        # toggle the simulation timer on and off
+        # toggle the simulation ticker on and off
         if not self.sim.running:  # start
-            self.sim.timer.start(int(self.sim.dt_anim * 1000))
+            # ticker times out (calls the update) every real dt_anim / ANIM_SPEED_FACTOR seconds
+            self.sim.ticker.start(int(self.sim.dt_anim * 1000 / ANIM_SPEED_FACTOR))
             self.sim.running = True
             self.start_stop_button.setText('Stop')
         else:  # stop
-            self.sim.timer.stop()
+            if self.dump_logs_on_stop:
+                self.logger.info(f'Stopped: \n'
+                    f't_data: {self.t_data}\n'
+                    f'x1: {self.x1}\n'
+                    f'x2: {self.x2}\n'
+                    f't_meas: {self.t_meas}\n'
+                    f'y_meas: {self.y_meas}\n'
+                    f'u_data: {self.u_data}\n'
+                    f'y_sp_data: {self.y_sp_data}\n'
+                    f'shapes: {self.t_data.shape, self.x1.shape, self.x2.shape, self.t_meas.shape}\n'
+                    f'{self.y_meas.shape, self.u_data.shape, self.y_sp_data.shape}\n\n')
+            self.sim.ticker.stop()
             self.sim.running = False
             self.start_stop_button.setText('Start')
 

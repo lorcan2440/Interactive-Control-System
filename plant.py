@@ -171,7 +171,7 @@ class Plant:
 
         t_span = np.arange(t_start, t_stop + dt, dt)  # shape (num_steps,)
         if t_span[-1] - t_stop > 0:
-            if np.isclose(t_span[-1], t_stop, atol=1e-10):  # atol ~ machine epsilon
+            if np.isclose(t_span[-1], t_stop, atol=getattr(self, 'EPS', 1e-10)):  # atol ~ machine epsilon
                 t_span[-1] = t_stop  # ensure last time point is exactly t_stop
             else:
                 t_span = t_span[:-1]  # remove last time point

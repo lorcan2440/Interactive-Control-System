@@ -13,7 +13,7 @@ from PyQt6.QtCore import QTimer
 from plant import Plant
 from controllers import ControllerType, ManualController, OpenLoopController, BangBangController, PIDController
 from gui import GUI
-from utils import get_logger, TIME_STEPS, PLANT_DEFAULT_PARAMS, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
+from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAULT_PARAMS, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
 
 
 class Simulation(QWidget):
@@ -55,16 +55,26 @@ class Simulation(QWidget):
 
         # init logging
         self.logger = get_logger()
+        if not LOGGING_ON:
+            self.logger.disabled = True
 
         # set time step sizes
         self.dt_int = TIME_STEPS['DT_INT']  # integration time step for solving dynamics
         self.dt_anim = TIME_STEPS['DT_ANIM']  # animation (frame) and control loop time step
         self.dt_window = TIME_STEPS['DT_SLIDING_WINDOW']  # time window size for sliding window plot
 
-        # simulation time
+        # present time
         self.t = 0.0
+
+        # check time steps are acceptable
+        self.EPS = 10 ** (-1 * MAX_SIG_FIGS)  # small number for use with float comparisons
+        if not (self.EPS < self.dt_int <= self.dt_anim <= self.dt_window):
+            raise ValueError(f'Invalid time step sizes: simulation requires \n'
+                f'EPS={self.EPS} < dt_int={self.dt_int} <= dt_anim={self.dt_anim} <= dt_window={self.dt_window}.')
+        
         # init plant
         self.plant = Plant(dims=2, **PLANT_DEFAULT_PARAMS)
+        self.plant.EPS = self.EPS  # pass along epsilon
 
         # init all controllers
         self.manual_controller = ManualController(sim=self, plant=self.plant)
@@ -76,16 +86,17 @@ class Simulation(QWidget):
         self.controller_type = ControllerType.MANUAL
 
         # set initial values
-        for param in CONTROLLER_PARAMS_LIST + ['y_sp']:
+        self.y_sp = np.array([[GUI_SLIDER_CONFIG['y_sp']['init']]])  # shape (1, 1)
+        for param in CONTROLLER_PARAMS_LIST:
             setattr(self, param, GUI_SLIDER_CONFIG[param]['init'])
 
         # initialise GUI window
-        self.gui = GUI(self)  # the gui and sim can both access each other's attributes and methods
+        self.gui = GUI(self, dump_logs_on_stop=LOGGING_ON)
         self.gui.init_gui()
 
-        # start simulation timer
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_frame)
+        # start simulation ticker
+        self.ticker = QTimer()
+        self.ticker.timeout.connect(self.update_frame)
 
         # initially stopped
         self.running = False
@@ -143,6 +154,9 @@ class Simulation(QWidget):
 
         # update plant control input
         self.plant.u = u
+
+        if LOGGING_ON:
+            self.logger.debug(f'For frame starting at t = {t_start:.5f}: \t used u = {u.item():.10f}, \t y_sp = {self.y_sp.item():.5f}, \t e = {e.item()}.')
 
         # solve dynamics
         t_stop = t_start + self.dt_anim
