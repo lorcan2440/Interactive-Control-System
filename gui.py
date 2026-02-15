@@ -2,6 +2,7 @@
 import numpy as np
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, QButtonGroup
 from PyQt6.QtCore import Qt
+import pyqtgraph as pg
 from pyqtgraph import GraphicsLayoutWidget, mkPen
 
 # local imports
@@ -317,4 +318,4 @@ class GUI:
                 self.sim.controller_type = ControllerType.OPENLOOP
             case ControllerType.PID:
                 self.sim.controller_type = ControllerType.PID
-                self.sim.pid_controller.error_integrated = np.array([[0.0]])
+                self.sim.pid_controller.error_integrated = np.array([[0.0]])  # reset integral memory
