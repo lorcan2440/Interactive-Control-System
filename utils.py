@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QSlider, QHBoxLayout, QLabel, QWidget
 #########################
 
 # set to True to log to console and debug.log
-LOGGING_ON = True
+LOGGING_ON = False
 
 # default slider parameters for controllers and plant
 GUI_SLIDER_CONFIG = {
@@ -33,8 +33,8 @@ GUI_SLIDER_CONFIG = {
 # it is better (but not required) to keep these as integer multiples of each other
 TIME_STEPS = {
     'DT_INT': 0.001,
-    'DT_ANIM': 0.050,
-    'DT_SLIDING_WINDOW': 3.000,
+    'DT_ANIM': 0.020,
+    'DT_SLIDING_WINDOW': 5.000,
 }
 
 # ratio of real time to simulation time for the animation (e.g. 1.0 = real time, 2.0 = double speed, 0.5 = half speed)
@@ -57,6 +57,8 @@ w_meas_var_init = GUI_SLIDER_CONFIG['w_meas_stddev']['init'] ** 2
 
 # default plant state space model parameters and initial conditions
 PLANT_DEFAULT_PARAMS = {
+
+    'dims': 2,                        # state dimension
      
     'A': np.array([[-11.0, 20.0],       # state transition matrix A (from x to x_dot)
                    [10.0, -21.0]]),
@@ -73,8 +75,8 @@ PLANT_DEFAULT_PARAMS = {
 
 	'R': np.array([[w_meas_var_init]]),         # measurement noise covariance matrix R (from w_meas to y)
      
-    'x_0': np.array([[1.0],             # initial state x_0
-                     [1.0]]),
+    'x_0': np.array([[0.0],             # initial state x_0
+                     [0.0]]),
 }
 
 # if D is missing, set it to [[0.0]]

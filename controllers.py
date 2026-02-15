@@ -53,8 +53,14 @@ class OpenLoopController:
         self.sim = sim
         self.plant = plant
         self.logger = get_logger()
+        self.calc_ss_gain()
 
-        self.G = lambda s: plant.C @ np.linalg.inv(s * np.eye(plant.dims) - plant.A) @ plant.B + plant.D
+    def calc_ss_gain(self):
+        '''
+        Calculate the steady-state gain of the plant. G(s) is the transfer function from u to y,
+        and the steady-state gain to a step change in u is |G(0)|.
+        '''
+        self.G = lambda s: self.plant.C @ np.linalg.inv(s * np.eye(self.plant.dims) - self.plant.A) @ self.plant.B + self.plant.D
         self.ss_gain = self.G(0)  # steady state gain of plant in open-loop conditions = G(0)
 
     def calc_u(self) -> np.ndarray:
@@ -117,6 +123,9 @@ class PIDController:
         self.sim = sim
         self.plant = plant
 
+        self.reset_memory()
+
+    def reset_memory(self):
         self.error_prev = np.array([[0.0]])
         self.error_integrated = np.array([[0.0]])
 

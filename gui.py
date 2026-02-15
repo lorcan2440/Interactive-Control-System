@@ -1,9 +1,23 @@
 # external imports
 import numpy as np
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, QButtonGroup
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QGroupBox,
+    QRadioButton,
+    QPushButton,
+    QButtonGroup,
+    QDialog,
+    QDialogButtonBox,
+    QMessageBox,
+)
+from PyQt6.QtCore import Qt, QTimer
 import pyqtgraph as pg
 from pyqtgraph import GraphicsLayoutWidget, mkPen
+
+# local widget for editing matrices
+from state_space_input import StateSpaceMatrixInput
 
 # local imports
 from controllers import ControllerType
@@ -18,12 +32,7 @@ class GUI:
         self.logger = self.sim.logger
         self.dump_logs_on_stop = dump_logs_on_stop
 
-        # plotting buffers
-        self.t_data = np.array([])
-        self.x_data = np.array([[] for _ in range(self.sim.plant.dims)])
-        self.y_meas = np.array([])
-        self.y_sp_data = np.array([])
-        self.u_data = np.array([])
+        self.clear_buffers()
 
         # buffer size constants - rounding accounts for cases when time steps are not multiples of each other
         self.n_int_per_frame = int(np.ceil(round(self.sim.dt_anim / self.sim.dt_int, MAX_SIG_FIGS))) + 1
@@ -34,14 +43,23 @@ class GUI:
         self.sim.controller_type = ControllerType.MANUAL
         self.controller_param_widgets = {}
 
-    def init_gui(self):
+    def clear_buffers(self):
 
-        # build layout onto the Simulation QWidget
-        main_layout = QVBoxLayout()
+        # set empty plotting buffers
+        self.t_data = np.array([])
+        self.x_data = np.array([[] for _ in range(self.sim.plant.dims)])
+        self.y_data = np.array([])
+        self.y_meas = np.array([])
+        self.y_sp_data = np.array([])
+        self.u_data = np.array([])
 
-        ## 1) top area - graphs
+    def clear_graph_traces(self):
 
-        self.win = GraphicsLayoutWidget()  # from PyQtGraph
+        # if graphs already exist, clear them
+        if hasattr(self, 'plot_x'):
+            self.plot_x.clear()
+        if hasattr(self, 'plot_u'):
+            self.plot_u.clear()
 
         # states and measurement plot
         self.plot_x = self.win.addPlot(row=0, col=0, title='States (x), Measurement (y_meas) and Setpoint (y_sp)')
@@ -50,19 +68,19 @@ class GUI:
 
         # init curves for each state variable
         for i in range(1, self.sim.plant.dims + 1):
-            curve_x_i = self.plot_x.plot(pen=pg.intColor(i - 1, hues=self.sim.plant.dims, minValue=255), name=f'x_{i}')
+            curve_x_i = self.plot_x.plot(pen=pg.intColor(i - 1, hues=self.sim.plant.dims, values=77), name=f'x_{i}')
+            curve_x_i.setVisible(False)  # hide all state variables initially
             setattr(self, f'curve_x_{i}', curve_x_i)
-            if i != self.sim.plant.dims:
-                curve_x_i.setVisible(False)  # hide all but the last state variable
 
         # init curve for measurement
         self.curve_y_meas = self.plot_x.plot(pen=None, symbol='o', 
-            symbolPen=pg.intColor(-1, hues=self.sim.plant.dims, minValue=255),  # match colour of last state variable
-            symbolSize=4, symbolBrush=0.2, name='y_meas')
+            symbolPen=mkPen(color='white'), symbolSize=4, symbolBrush=0.2, name='y_meas')
+        # init curve for true output y (computed from state-space matrices)
+        self.curve_y = self.plot_x.plot(pen=mkPen(color='white'), name='y')
         
         # init curve for setpoint - uses Step Mode (piecewise constant across a frame)
         self.curve_y_sp = self.plot_x.plot(stepMode='left', 
-            pen=mkPen(color='white', style=Qt.PenStyle.DashLine), name='y_sp')
+            pen=mkPen(color='#777777', style=Qt.PenStyle.DashLine), name='y_sp')
 
         # control input plot
         self.plot_u = self.win.addPlot(row=1, col=0, title='Control input (u)')
@@ -70,6 +88,16 @@ class GUI:
 
         # init curve for control input - uses Step Mode (piecewise constant across a frame)
         self.curve_u = self.plot_u.plot(stepMode='left', pen=mkPen(color='green'))
+
+    def init_gui(self):
+
+        # build layout onto the Simulation QWidget
+        main_layout = QVBoxLayout()
+
+        ## 1) top area - graphs
+
+        self.win = GraphicsLayoutWidget()  # from PyQtGraph
+        self.clear_graph_traces()  # init empty graphs and curves
 
         main_layout.addWidget(self.win, stretch=1)
 
@@ -80,6 +108,11 @@ class GUI:
         self.start_stop_button = QPushButton('Start')
         self.start_stop_button.clicked.connect(self.toggle_start_stop)
         first_row_hbox.addWidget(self.start_stop_button)
+
+        # change plant model button
+        self.change_plant_button = QPushButton('Change plant model')
+        self.change_plant_button.clicked.connect(self.open_change_plant_dialog)
+        first_row_hbox.addWidget(self.change_plant_button)
         first_row_hbox.addStretch()
 
         # controller selection box
@@ -176,9 +209,10 @@ class GUI:
         self.set_controller(ControllerType.MANUAL)
         self.build_controller_params(ControllerType.MANUAL)
 
-    def update_plots(self, t_span: np.ndarray, x_span: np.ndarray, y_meas: np.ndarray):
+    def update_plots(self, t_span: np.ndarray, x_span: np.ndarray, y_span: np.ndarray, y_meas: np.ndarray):
         # t_span: array of times for this frame. Shape: (n,)
         # x_span: state trajectory for this frame. Shape: (2, n)
+        # y_span: true output trajectory for this frame. Shape: (1, n)
         # y_meas: latest measurement. Shape: (1, 1)
 
         # compute setpoint numeric value
@@ -189,15 +223,17 @@ class GUI:
         u_last = float(self.sim.plant.u.item())
 
         # current measured output (scalar)
-        y_last = float(y_meas.item())
+        y_meas_last = float(y_meas.item())
 
         if self.t_data.size == 0:
             # first frame: take full time span and states
-            u_0, y_0 = self.sim.plant.u_0.item(), self.sim.y_0.item()
-            self.t_data = t_span.copy()  # shape: (n,)
-            self.x_data = x_span.copy()  # shape: (2, n)
+            u_0 = self.sim.plant.u_0.item()
+            y_meas_0 = self.sim.y_meas_0.item()
+            self.t_data = t_span.copy()  # shape: (n_int_per_frame,)
+            self.x_data = x_span.copy()  # shape: (dims, n_int_per_frame)
+            self.y_data = y_span.copy()  # shape: (1, n_int_per_frame)
             self.t_meas = np.array([float(t_span[0]), float(t_span[-1])])  # shape: (2,)
-            self.y_meas = np.array([y_0, y_last])  # shape: (2,)
+            self.y_meas = np.array([y_meas_0, y_meas_last])  # shape: (2,)
             self.u_data = np.array([u_0, u_0])  # shape: (2,)
             self.y_sp_data = np.array([y_sp_val, y_sp_val])  # shape: (2,)
         else:
@@ -208,8 +244,9 @@ class GUI:
             # append new data (skip first value of most recent frame to avoid duplication)
             self.t_data = np.concatenate((self.t_data[i_data:], t_span[1:]), axis=0)
             self.x_data = np.concatenate((self.x_data[:, i_data:], x_span[:, 1:]), axis=1)
+            self.y_data = np.concatenate((self.y_data[:, i_data:], y_span[:, 1:]), axis=1)
             self.t_meas = np.concatenate((self.t_meas[i_meas:], np.array([float(t_span[-1])])), axis=0)
-            self.y_meas = np.concatenate((self.y_meas[i_meas:], np.array([y_last])), axis=0)
+            self.y_meas = np.concatenate((self.y_meas[i_meas:], np.array([y_meas_last])), axis=0)
             self.u_data = np.concatenate((self.u_data[i_meas:], np.array([u_last])), axis=0)
             self.y_sp_data = np.concatenate((self.y_sp_data[i_meas:], np.array([y_sp_val])), axis=0)
         
@@ -219,6 +256,7 @@ class GUI:
             curve_x_i = getattr(self, f'curve_x_{i}')
             curve_x_i.setData(self.t_data, self.x_data[i - 1])
         # plot measurement, setpoint, and control input
+        self.curve_y.setData(self.t_data, self.y_data.flatten())
         self.curve_y_meas.setData(self.t_meas, self.y_meas)
         self.curve_y_sp.setData(self.t_meas, self.y_sp_data)
         self.curve_u.setData(self.t_meas, self.u_data)
@@ -243,11 +281,12 @@ class GUI:
                 self.logger.info(f'Stopped: \n'
                     f't_data: {self.t_data}\n'
                     f'x_data: {self.x_data}\n'
+                    f'y_data: {self.y_data}\n'
                     f't_meas: {self.t_meas}\n'
                     f'y_meas: {self.y_meas}\n'
                     f'u_data: {self.u_data}\n'
                     f'y_sp_data: {self.y_sp_data}\n'
-                    f'shapes: {self.t_data.shape, self.x_data.shape, self.t_meas.shape}\n'
+                    f'shapes: {self.t_data.shape, self.x_data.shape, self.y_data.shape, self.t_meas.shape}\n'
                     f'{self.y_meas.shape, self.u_data.shape, self.y_sp_data.shape}\n\n')
             self.sim.ticker.stop()
             self.sim.running = False
@@ -273,8 +312,10 @@ class GUI:
         w2_sigma = cfg_w2['min'] + int(self.slider_w2.value()) * cfg_w2['step']
         self.w2_label.setText(f'{w2_sigma:.3f}')
 
-        Q = np.array([[w1_sigma**2, 0.0], [0.0, w1_sigma**2]])
-        R = np.array([[w2_sigma**2]])
+        # NOTE: only one process noise slider - Q is diagonal (uncorrelated) with identical entries
+        # TODO: allow user-defined matrices for Q and R
+        Q = np.diag([w1_sigma ** 2 for _ in range(self.sim.plant.dims)])
+        R = np.array([[w2_sigma ** 2]])
 
         self.sim.plant.set_noise_covariances(Q=Q, R=R)
 
@@ -315,6 +356,12 @@ class GUI:
                 self.add_param('K_i', 'K_i')
                 self.add_param('K_d', 'K_d')
 
+                # reset PID memory button
+                reset_btn = QPushButton('Reset memory')
+                reset_btn.setToolTip('Reset PID integrator and derivative history')
+                reset_btn.clicked.connect(self.sim.pid_controller.reset_memory)
+                self.params_layout.addWidget(reset_btn)
+
         # set slider positions to current values
         for key, (slider, val_label) in self.controller_param_widgets.items():
             cfg = GUI_SLIDER_CONFIG[key]
@@ -337,7 +384,7 @@ class GUI:
             setattr(self.sim, key, val)
         
     def set_controller(self, controller_type: ControllerType):
-        # set the simulation controller type
+        # set the simulation controller type and perform any needed setup
         match controller_type:
             case ControllerType.MANUAL:
                 self.sim.controller_type = ControllerType.MANUAL
@@ -348,3 +395,118 @@ class GUI:
             case ControllerType.PID:
                 self.sim.controller_type = ControllerType.PID
                 self.sim.pid_controller.error_integrated = np.array([[0.0]])  # reset integral memory
+                # TODO: write a controller method `reset_memory()` and call it here
+
+    def open_change_plant_dialog(self):
+        """Show a dialog allowing the user to edit the plant state-space matrices.
+
+        The simulation ticker is paused while the dialog is open and resumed
+        if it was running before.
+        """
+        was_running = getattr(self.sim, 'running', False)
+        try:
+            if was_running:
+                try:
+                    self.sim.ticker.stop()
+                except Exception:
+                    pass
+                self.sim.running = False
+
+            dialog = QDialog(self.sim)
+            dialog.setWindowTitle('Change plant model')
+            dlg_layout = QVBoxLayout()
+
+            widget = StateSpaceMatrixInput(parent=dialog, initial_dims=self.sim.plant.dims)
+
+            # pre-fill with current plant matrices if available
+            A, B, C, D = self.sim.plant.A, self.sim.plant.B, self.sim.plant.C, self.sim.plant.D
+            widget.set_matrices(np.asarray(A), np.asarray(B), np.asarray(C), np.asarray(D))
+
+            dlg_layout.addWidget(widget)
+
+            eig_label = QLabel('Eigenvalues:')
+            dlg_layout.addWidget(eig_label)
+
+            def _update_eigs():
+                try:
+                    A_cur, _, _, _ = widget.get_matrices()
+                except Exception:
+                    eig_label.setText('Eigenvalues: (invalid)')
+                    return
+                try:
+                    vals = np.linalg.eigvals(A_cur)
+                    # format to 5 significant figures
+                    vals_str = ', '.join([f'{v:.5g}' for v in vals])
+                    eig_label.setText(f'Eigenvalues: {vals_str}')
+                except Exception:
+                    eig_label.setText('Eigenvalues: (error)')
+
+            # update eigenvalues when A is edited or dims change
+            try:
+                widget._table_A.itemChanged.connect(lambda _it: _update_eigs())
+            except Exception:
+                pass
+            try:
+                widget._spin.valueChanged.connect(lambda _v: _update_eigs())
+            except Exception:
+                pass
+
+            # initialise eigenvalue display
+            _update_eigs()
+
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            dlg_layout.addWidget(buttons)
+            dialog.setLayout(dlg_layout)
+
+            buttons.accepted.connect(lambda: self.on_accept_change_plant(widget, dialog))
+            buttons.rejected.connect(dialog.reject)
+
+            dialog.exec()
+
+        finally:
+            # resume simulation if it was running before
+            if was_running:
+                try:
+                    self.sim.ticker.start(int(self.sim.dt_anim * 1000 / ANIM_SPEED_FACTOR))
+                except Exception:
+                    pass
+                self.sim.running = True
+
+    def on_accept_change_plant(self, widget, dialog):
+        # called when "OK" is clicked in the change plant dialog box
+
+        A_new, B_new, C_new, D_new = widget.get_matrices()
+
+        try:
+            # apply new matrices to plant
+            self.sim.plant.set_state_space_matrices(A_new, B_new, C_new, D_new)
+
+        except ValueError:
+            # dims was changed: attempt to reconfigure the plant to the new size,
+            # reset buffers and rebuild plots so the simulation can resume.
+            new_dims = A_new.shape[0]
+            self.logger.info(f'Plant dimensions changed: {self.sim.plant.dims} -> {new_dims}. Re-initialising plant and clearing buffers.')
+
+            # update plant dimension and initial state shapes
+            self.sim.plant.dims = int(new_dims)
+            self.sim.plant.x_0 = np.zeros((new_dims, 1))
+            self.sim.plant.x = self.sim.plant.x_0.copy()
+            self.sim.plant.u_0 = getattr(self.sim.plant, 'u_0', np.array([[0.0]]))
+            self.sim.plant.u = self.sim.plant.u_0.copy()
+
+            # apply the new state-space matrices
+            self.sim.plant.set_state_space_matrices(A_new, B_new, C_new, D_new)
+            R_old = getattr(self.sim.plant, 'R', np.array([[0.0]]))
+            Q_new = np.zeros((new_dims, new_dims))
+            self.sim.plant.set_noise_covariances(Q=Q_new, R=R_old)
+
+            # clear data buffers and graph areas
+            self.clear_buffers()
+            self.clear_graph_traces()
+
+        else:
+            # for controllers that use plant matrices (e.g. open-loop), recalculate their needed params
+            self.sim.openloop_controller.calc_ss_gain()
+            self.sim.pid_controller.reset_memory()
+
+        dialog.accept()

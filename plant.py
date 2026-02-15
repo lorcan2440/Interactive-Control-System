@@ -16,12 +16,13 @@ class Plant:
         modelled by the continuous-time equations:
 
         - dx/dt = A x + B u + w_proc
-        - y = C x + D u + w_meas
+        - y = C x + D u
+        - y_meas = y + w_meas
 
         where:
 
         - `u`: the control input to the plant. Shape: (1, 1) (scalar)
-        - `y`: the measurement output from the plant. Shape (1, 1) (scalar)
+        - `y_meas`: the measurement output from the plant. Shape: (1, 1) (scalar)
         - `x`: the state of the plant. Shape (`dims`, 1) (column vector)
 
         The state-space matrices A, B, C, D are set using the `set_state_space_matrices` method.
@@ -94,11 +95,11 @@ class Plant:
             R = np.array([[0.0]])
 
         if Q.shape != (self.dims, self.dims) or R.shape != (1, 1):
-            raise ValueError('Noise covariance matrices have incorrect dimensions.')
+            raise ValueError('Noise covariance matrices Q and R have incorrect dimensions.')
         elif not np.allclose(Q, Q.T):
-            raise ValueError('Process noise covariance matrix must be symmetric.')
+            raise ValueError('Process noise covariance matrix Q must be symmetric.')
         elif not np.all(np.linalg.eigvals(Q) >= 0) or R[0, 0] < 0:
-            raise ValueError('Noise covariance matrices must be positive semidefinite.')
+            raise ValueError('Noise covariance matrices Q and R must be positive semidefinite.')
         else:
             self.Q = Q
             self.R = R
@@ -119,35 +120,9 @@ class Plant:
             mean=np.zeros(self.dims), cov=self.Q, size=n, check_valid='raise').T  # shape (dims, n)
         
         return w_proc
-    
-    def sample_measurement_noise(self, n: int = 1) -> np.ndarray:
-        '''
-        Returns sample(s) of measurement noise, drawn from its Gaussian distribution.
-        
-        ### Arguments
-        #### Optional
-        - `n` (int, default = 1): number of noise samples to generate.
-        
-        ### Returns
-        - `np.ndarray`: measurement noise samples. Shape (1, `n`) (row vector)
-        '''
-
-        w_meas = np.random.normal(loc=0.0, scale=np.sqrt(self.R[0, 0]), size=(1, n))  # shape (1, n)
-        
-        return w_meas
-    
-    def sample_measurement(self):
-        '''
-        Sample of the measurement `y`, given the current state `x` and control input `u`, 
-        and including measurement noise. Sets the attribute `self.y` to the sampled measurement.
-        '''
-
-        w_meas = self.sample_measurement_noise(n=1)  # shape (1, 1)
-        y_meas = self.C @ self.x + self.D @ self.u + w_meas  # shape (1, 1)
-        self.y = y_meas
 
     def integrate_dynamics(self, t_start: float, t_stop: float, dt: float, 
-                       hold_noise_const: bool = False) -> tuple[np.ndarray, np.ndarray]:
+            hold_noise_const: bool = False) -> tuple[np.ndarray, np.ndarray]:
         '''
         Integrates the equations describing the plant system from `t_start` to `t_stop` inclusive, using
         a step size of `dt`.
@@ -183,7 +158,7 @@ class Plant:
 
         # set initial state
         x_span[:, 0] = self.x.reshape(self.dims,)
-
+    
         # sample noise in advance
         if hold_noise_const:
             w_proc = self.sample_process_noise(n=1)  # shape (dims, 1)
@@ -217,3 +192,37 @@ class Plant:
         self.x = x_span[:, -1].reshape(self.dims, 1)
 
         return t_span.reshape((num_steps,)), x_span
+
+    def calc_y(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
+        '''
+        Calculate the true output y (no measurement noise is added)
+
+        - x: state vectors. Shape: (dims, n) (array of column vectors)
+        - u: control inputs. Shape: (1, n) (row vector)
+        '''
+        return self.C @ x + self.D @ u
+    
+    def sample_measurement_noise(self, n: int = 1) -> np.ndarray:
+        '''
+        Returns sample(s) of measurement noise, drawn from its Gaussian distribution.
+        
+        ### Arguments
+        #### Optional
+        - `n` (int, default = 1): number of noise samples to generate.
+        
+        ### Returns
+        - `np.ndarray`: measurement noise samples. Shape (1, `n`) (row vector)
+        '''
+        
+        return np.random.normal(loc=0.0, scale=np.sqrt(self.R[0, 0]), size=(1, n))  # shape (1, n)
+    
+    def sample_measurement(self):
+        '''
+        Sample of the noisy measurement y, given the current state `x` and control input `u`, 
+        and including measurement noise. 
+        
+        Set the attributes `self.y` (the true output without noise) and `self.y_meas` (the measured output with noise).
+        '''
+        self.y = self.calc_y(self.x, self.u)
+        self.y_meas = self.y + self.sample_measurement_noise(n=1)
+        return self.y_meas

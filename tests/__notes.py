@@ -1,4 +1,5 @@
-import numpy as np
+def f(**kwargs):
+    print(kwargs)
 
-a = np.empty((0, 0))
-print(a)
+
+f()

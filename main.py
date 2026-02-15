@@ -18,7 +18,7 @@ from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAUL
 
 class Simulation(QWidget):
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
 
         '''
         Create a simulation of a closed-loop feedback control system. Definitions:
@@ -38,13 +38,13 @@ class Simulation(QWidget):
         to the plant model).
 
         Plant variables:
-        - x_1: drug concentration in compartment 1 (state variable 1)
-        - x_2: drug concentration in compartment 2 (state variable 2)
-        - u: drug injection (control input)
-        - w_1: model disturbance in compartment 2
-        - w_2: measurement noise
-        - y: measurement of compartment 2
-        - t: time
+        - x: state variables (vector)
+        - u: control input (scalar)
+        - w_proc: process noise (vector)
+        - w_meas: measurement noise (scalar)
+        - y: output (scalar)
+        - y_meas: measured output (scalar)
+        - t: time (scalar)
 
         Transfer functions (TFs) are the relationships between the inputs and outputs of any system 
         (e.g. the controller, the plant, the whole system), expressed as functions of s in the Laplace transform 
@@ -73,7 +73,7 @@ class Simulation(QWidget):
                 f'EPS={self.EPS} < dt_int={self.dt_int} <= dt_anim={self.dt_anim} <= dt_window={self.dt_window}.')
         
         # init plant
-        self.plant = Plant(dims=2, **PLANT_DEFAULT_PARAMS)
+        self.plant = Plant(*args, **(PLANT_DEFAULT_PARAMS if not kwargs else kwargs))
         self.plant.EPS = self.EPS  # pass along epsilon
 
         # init all controllers
@@ -90,7 +90,7 @@ class Simulation(QWidget):
         for param in CONTROLLER_PARAMS_LIST:
             setattr(self, param, GUI_SLIDER_CONFIG[param]['init'])
 
-        # initialise GUI window
+        # init GUI window
         self.gui = GUI(self, dump_logs_on_stop=LOGGING_ON)
         self.gui.init_gui()
 
@@ -111,33 +111,34 @@ class Simulation(QWidget):
         t_start = self.t
 
         # solve dynamics for this frame
-        t_span, x_span, y_meas = self.solve_one_frame(t_start)
+        t_span, x_span, y_span, y_meas = self.solve_one_frame(t_start)
 
         # update GUI with new data
-        self.gui.update_plots(t_span, x_span, y_meas)
+        self.gui.update_plots(t_span, x_span, y_span, y_meas)
 
-    def solve_one_frame(self, t_start: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def solve_one_frame(self, t_start: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         '''
         Solves the system dynamics for one frame of the interactive control loop, from `t_start`.
         The stop time is `t_start + self.dt_anim`.
 
         The control input `u` is calculated once at `t_start` using the controller's `calc_u` method,
-        based on the value of `y_sp` and `y` at `t_start`, and this value of u is used throughout the frame.
+        based on the value of `y_sp` and `y_meas` at `t_start`, and this value of u is used throughout the frame.
 
         ### Arguments
         - `t_start`: start time of the frame. Shape: scalar
 
         ### Returns
-        - `tuple[np.ndarray, np.ndarray, np.ndarray]`: arrays of time points, state trajectory, and measurement over this frame (including both endpoints).
+        - `tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]`: arrays of time points, state trajectory, output, and
+        measured output over this frame (including both endpoints).
         '''
 
-        # if this is the first frame, y has not been set yet, so compute it now
-        if not hasattr(self.plant, 'y'):
+        # if this is the first frame, y_meas has not been set yet, so compute it now
+        if not hasattr(self.plant, 'y_meas'):
             self.plant.sample_measurement()
-            self.y_0 = self.plant.y
+            self.y_meas_0 = self.plant.y_meas
 
-        # get error at start of this frame
-        e = self.y_sp - self.plant.y  # shape (1, 1)
+        # get error at start of this frame (based on noisy measurement)
+        e = self.y_sp - self.plant.y_meas  # shape (1, 1)
 
         # select current controller and compute control input based on error
         match self.controller_type:
@@ -156,19 +157,22 @@ class Simulation(QWidget):
         self.plant.u = u
 
         if LOGGING_ON:
-            self.logger.debug(f'For frame starting at t = {t_start:.5f}: \t used u = {u.item():.10f}, \t y_sp = {self.y_sp.item():.5f}, \t e = {e.item()}.')
+            self.logger.debug(f'For frame starting at t = {t_start:.5f}: \t used u = {u.item():.10f}, \t y_sp = {self.y_sp.item():.5f}, \t y_meas = {self.plant.y_meas.item():.5f}, \t e = {e.item()}.')
 
         # solve dynamics
         t_stop = t_start + self.dt_anim
         t_span, x_span = self.plant.integrate_dynamics(t_start=t_start, t_stop=t_stop, dt=self.dt_int)
 
-        # get measurement noise and measurement at t_stop
-        self.plant.sample_measurement()
+        # calculate true output (without noise)
+        y_span = self.plant.calc_y(x_span, u=np.tile(u, (1, x_span.shape[1])))  # shape (1, num_steps)
+
+        # get measurement noise at end of frame
+        self.plant.y_meas = y_span[0, -1] + self.plant.sample_measurement_noise(n=1)  # shape (1, 1)
 
         # advance simulation time
         self.t = t_stop
 
-        return t_span, x_span, self.plant.y
+        return t_span, x_span, y_span, self.plant.y_meas
 
 
 def main():
