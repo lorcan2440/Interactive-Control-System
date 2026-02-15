@@ -318,4 +318,3 @@ class GUI:
             case ControllerType.PID:
                 self.sim.controller_type = ControllerType.PID
                 self.sim.pid_controller.error_integrated = np.array([[0.0]])
-
