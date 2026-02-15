@@ -20,8 +20,7 @@ class GUI:
 
         # plotting buffers
         self.t_data = np.array([])
-        self.x1 = np.array([])
-        self.x2 = np.array([])
+        self.x_data = np.array([[] for _ in range(self.sim.plant.dims)])
         self.y_meas = np.array([])
         self.y_sp_data = np.array([])
         self.u_data = np.array([])
@@ -46,20 +45,31 @@ class GUI:
 
         # states and measurement plot
         self.plot_x = self.win.addPlot(row=0, col=0, title='States (x), Measurement (y_meas) and Setpoint (y_sp)')
-        self.plot_x.addLegend()
-        self.curve_x1 = self.plot_x.plot(pen='r', name='x1')
-        self.curve_x2 = self.plot_x.plot(pen='b', name='x2')
-        self.curve_x1.setVisible(False)
-        self.curve_y_meas = self.plot_x.plot(
-            stepMode='left', pen=None, symbol='o', symbolPen=mkPen('y'), symbolSize=4, symbolBrush=0.2, name='y_meas')
-        self.curve_y_sp = self.plot_x.plot(
-            stepMode='left', pen=mkPen('m', style=Qt.PenStyle.DashLine), name='y_sp')
         self.plot_x.setAutoVisible(x=False)  # turn off x-axis auto-scaling
+        self.plot_x.addLegend()
+
+        # init curves for each state variable
+        for i in range(1, self.sim.plant.dims + 1):
+            curve_x_i = self.plot_x.plot(pen=pg.intColor(i - 1, hues=self.sim.plant.dims, minValue=255), name=f'x_{i}')
+            setattr(self, f'curve_x_{i}', curve_x_i)
+            if i != self.sim.plant.dims:
+                curve_x_i.setVisible(False)  # hide all but the last state variable
+
+        # init curve for measurement
+        self.curve_y_meas = self.plot_x.plot(pen=None, symbol='o', 
+            symbolPen=pg.intColor(-1, hues=self.sim.plant.dims, minValue=255),  # match colour of last state variable
+            symbolSize=4, symbolBrush=0.2, name='y_meas')
+        
+        # init curve for setpoint - uses Step Mode (piecewise constant across a frame)
+        self.curve_y_sp = self.plot_x.plot(stepMode='left', 
+            pen=mkPen(color='white', style=Qt.PenStyle.DashLine), name='y_sp')
 
         # control input plot
         self.plot_u = self.win.addPlot(row=1, col=0, title='Control input (u)')
-        self.curve_u = self.plot_u.plot(stepMode='left', pen='g')
         self.plot_u.setAutoVisible(x=False)  # turn off x-axis auto-scaling
+
+        # init curve for control input - uses Step Mode (piecewise constant across a frame)
+        self.curve_u = self.plot_u.plot(stepMode='left', pen=mkPen(color='green'))
 
         main_layout.addWidget(self.win, stretch=1)
 
@@ -185,8 +195,7 @@ class GUI:
             # first frame: take full time span and states
             u_0, y_0 = self.sim.plant.u_0.item(), self.sim.y_0.item()
             self.t_data = t_span.copy()  # shape: (n,)
-            self.x1 = x_span[0, :].copy()  # shape: (n,)
-            self.x2 = x_span[1, :].copy()  # shape: (n,)
+            self.x_data = x_span.copy()  # shape: (2, n)
             self.t_meas = np.array([float(t_span[0]), float(t_span[-1])])  # shape: (2,)
             self.y_meas = np.array([y_0, y_last])  # shape: (2,)
             self.u_data = np.array([u_0, u_0])  # shape: (2,)
@@ -198,23 +207,27 @@ class GUI:
             i_meas = max(0, self.t_meas.size - self.n_frame_per_window + 1)
             # append new data (skip first value of most recent frame to avoid duplication)
             self.t_data = np.concatenate((self.t_data[i_data:], t_span[1:]), axis=0)
-            self.x1 = np.concatenate((self.x1[i_data:], x_span[0, 1:]), axis=0)
-            self.x2 = np.concatenate((self.x2[i_data:], x_span[1, 1:]), axis=0)
+            self.x_data = np.concatenate((self.x_data[:, i_data:], x_span[:, 1:]), axis=1)
             self.t_meas = np.concatenate((self.t_meas[i_meas:], np.array([float(t_span[-1])])), axis=0)
             self.y_meas = np.concatenate((self.y_meas[i_meas:], np.array([y_last])), axis=0)
             self.u_data = np.concatenate((self.u_data[i_meas:], np.array([u_last])), axis=0)
             self.y_sp_data = np.concatenate((self.y_sp_data[i_meas:], np.array([y_sp_val])), axis=0)
         
         # update curves
-        self.curve_x1.setData(self.t_data, self.x1)
-        self.curve_x2.setData(self.t_data, self.x2)
+        # plot state variables
+        for i in range(1, self.sim.plant.dims + 1):
+            curve_x_i = getattr(self, f'curve_x_{i}')
+            curve_x_i.setData(self.t_data, self.x_data[i - 1])
+        # plot measurement, setpoint, and control input
         self.curve_y_meas.setData(self.t_meas, self.y_meas)
         self.curve_y_sp.setData(self.t_meas, self.y_sp_data)
         self.curve_u.setData(self.t_meas, self.u_data)
 
-        # update x-axis ranges
-        self.plot_x.setXRange(max(0, self.t_data[-1] - self.sim.dt_window), max(self.sim.dt_window, self.t_data[-1]))
-        self.plot_u.setXRange(max(0, self.t_data[-1] - self.sim.dt_window), max(self.sim.dt_window, self.t_data[-1]))
+        # update x-axis ranges to this window
+        self.plot_x.setXRange(max(0, self.t_data[-1] - self.sim.dt_window), 
+                              max(self.sim.dt_window, self.t_data[-1]))
+        self.plot_u.setXRange(max(0, self.t_data[-1] - self.sim.dt_window), 
+                              max(self.sim.dt_window, self.t_data[-1]))
 
     ## UI callbacks
 
@@ -229,13 +242,12 @@ class GUI:
             if self.dump_logs_on_stop:
                 self.logger.info(f'Stopped: \n'
                     f't_data: {self.t_data}\n'
-                    f'x1: {self.x1}\n'
-                    f'x2: {self.x2}\n'
+                    f'x_data: {self.x_data}\n'
                     f't_meas: {self.t_meas}\n'
                     f'y_meas: {self.y_meas}\n'
                     f'u_data: {self.u_data}\n'
                     f'y_sp_data: {self.y_sp_data}\n'
-                    f'shapes: {self.t_data.shape, self.x1.shape, self.x2.shape, self.t_meas.shape}\n'
+                    f'shapes: {self.t_data.shape, self.x_data.shape, self.t_meas.shape}\n'
                     f'{self.y_meas.shape, self.u_data.shape, self.y_sp_data.shape}\n\n')
             self.sim.ticker.stop()
             self.sim.running = False

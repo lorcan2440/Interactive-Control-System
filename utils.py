@@ -39,7 +39,7 @@ TIME_STEPS = {
 
 # ratio of real time to simulation time for the animation (e.g. 1.0 = real time, 2.0 = double speed, 0.5 = half speed)
 # NOTE: graphics rendering or computations may still be limiting factors
-ANIM_SPEED_FACTOR = 2.0
+ANIM_SPEED_FACTOR = 1.0
 
 #########################
 ### Internal settings ###
