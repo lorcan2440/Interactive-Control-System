@@ -6,6 +6,10 @@ from utils import get_logger, TIME_STEPS
 
 
 class Plant:
+
+    # TODO: add function to compute time constant and delay of the equivalent FOPDT (reduced order) plant model,
+    # using Skogestad's half rule. This can be used in the PID tuning rules.
+
     def __init__(self, dims: int, x_0: np.ndarray = None, u_0: np.ndarray = None,
                  A: np.ndarray = None, B: np.ndarray = None, C: np.ndarray = None, D: np.ndarray = None,
                  Q: np.ndarray = None, R: np.ndarray = None):

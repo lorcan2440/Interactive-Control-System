@@ -26,6 +26,7 @@ from utils import make_slider_from_cfg, MAX_SIG_FIGS, ANIM_SPEED_FACTOR, GUI_SLI
 
 class GUI:
 
+    # TODO: allow the user to set the Q and R matrices for noise in the "change plant model" dialog box
     # TODO: add a checkbox in the PID parameters box to enable/disable anti-windup:
     # if checked, show a 'u_sat' slider for the user to set the saturation limit for |u|
     # TODO: add buttons under the PID parameters row to set Kp, Ki, Kd based on IAE, ITAE, 
