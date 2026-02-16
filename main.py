@@ -142,6 +142,8 @@ class Simulation(QWidget):
 
         # select current controller and compute control input based on error
         match self.controller_type:
+            case ControllerType.NONE:
+                u = np.array([[0.0]])
             case ControllerType.MANUAL:
                 u = self.manual_controller.calc_u()
             case ControllerType.OPENLOOP:

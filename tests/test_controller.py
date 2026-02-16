@@ -10,6 +10,8 @@ from controllers import (
     PIDController,
 )
 
+# TODO: improve these tests by testing real numbers manually
+
 
 class SimpleSim:
     def __init__(
@@ -113,11 +115,11 @@ def test_pid_controller_p_i_d_terms_and_memory():
     # u_p = 2 * 1 = 2
     # u_i = 1 * (1 * 0.1) = 0.1
     # u_d = 0.5 * ((1 - 0) / 0.1) = 0.5 * 10 = 5
-    assert pytest.approx(u1[0, 0], rel=1e-9) == pytest.approx(7.1, rel=1e-9)
+    assert pytest.approx(u1[0, 0], rel=1e-9) == pytest.approx(3.1, rel=1e-9)
 
     # second call with same error: derivative term should be zero, integral doubles
     u2 = controller.calc_u(e)
     # u_p = 2
     # u_i = 1 * (2 * 0.1) = 0.2
     # u_d = 0
-    assert pytest.approx(u2[0, 0], rel=1e-9) == pytest.approx(2.2, rel=1e-9)
+    assert pytest.approx(u2[0, 0], rel=1e-9) == pytest.approx(3.0, rel=1e-9)

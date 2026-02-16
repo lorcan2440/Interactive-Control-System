@@ -9,6 +9,7 @@ from utils import get_logger
 
 
 class ControllerType(Enum):
+    NONE = auto()
     MANUAL = auto()
     OPENLOOP = auto()
     BANGBANG = auto()
@@ -194,6 +195,7 @@ class PIDController:
         else:
             # low-pass filter time constant: use user-configured `tau` when available,
             # otherwise fall back to 5x the sampling period
+            # NOTE: consider setting this to 0.1x the derivative time constant K_p / K_d
             tau = getattr(self.sim, 'tau', max(5.0 * dt, 1e-6))
 
             # Tustin's method implementation of the first-order low-pass 
@@ -207,9 +209,7 @@ class PIDController:
         # update stored noisy measurement
         self.y_meas_prev = y_meas
 
-        # -------------------
-        # Total control
-        # -------------------
+        # total control input = P + I + D
         u = u_p + u_i + u_d
         return u
 

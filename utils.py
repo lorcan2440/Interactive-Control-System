@@ -32,6 +32,8 @@ GUI_SLIDER_CONFIG = {
 
 # time step sizes for integration, animation and sliding window
 # it is better (but not required) to keep these as integer multiples of each other
+# TODO: add a button in the GUI to allow the user to change these time steps
+# make sure to re-run functions that depend on them (e.g. warnings about time step sizes)
 TIME_STEPS = {
     'DT_INT': 0.001,
     'DT_ANIM': 0.005,

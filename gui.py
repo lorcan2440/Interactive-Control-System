@@ -128,17 +128,20 @@ class GUI:
         controller_buttons_box_layout = QHBoxLayout()
         self.controller_buttons_group = QButtonGroup()
 
-        # controller selection radio buttons
+        # controller selection radio buttons (None first)
+        self.radio_none = QRadioButton('None')
         self.radio_manual = QRadioButton('Manual Control')
         self.radio_openloop = QRadioButton('Open Loop Control')
         self.radio_bangbang = QRadioButton('Bang-Bang Control')
         self.radio_pid = QRadioButton('PID Control')
 
+        self.controller_buttons_group.addButton(self.radio_none)
         self.controller_buttons_group.addButton(self.radio_manual)
         self.controller_buttons_group.addButton(self.radio_openloop)
         self.controller_buttons_group.addButton(self.radio_bangbang)
         self.controller_buttons_group.addButton(self.radio_pid)
 
+        controller_buttons_box_layout.addWidget(self.radio_none)
         controller_buttons_box_layout.addWidget(self.radio_manual)
         controller_buttons_box_layout.addWidget(self.radio_openloop)
         controller_buttons_box_layout.addWidget(self.radio_bangbang)
@@ -206,6 +209,7 @@ class GUI:
 
         # connect controller radio buttons
         # HACK: on_controller_selected(...) is only run if button is toggled on
+        self.radio_none.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.NONE))
         self.radio_manual.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.MANUAL))
         self.radio_openloop.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.OPENLOOP))
         self.radio_bangbang.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.BANGBANG))
@@ -351,6 +355,10 @@ class GUI:
         self.controller_param_widgets.clear()
 
         match controller_type:
+            case ControllerType.NONE:
+                lbl = QLabel('No controller: u = 0')
+                self.params_layout.addWidget(lbl)
+                return
             case ControllerType.MANUAL:
                 self.add_param('manual_u', 'Manual u')
             case ControllerType.OPENLOOP:
@@ -395,6 +403,8 @@ class GUI:
     def set_controller(self, controller_type: ControllerType):
         # set the simulation controller type and perform any needed setup
         match controller_type:
+            case ControllerType.NONE:
+                self.sim.controller_type = ControllerType.NONE
             case ControllerType.MANUAL:
                 self.sim.controller_type = ControllerType.MANUAL
             case ControllerType.BANGBANG:
