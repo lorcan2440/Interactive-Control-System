@@ -2,7 +2,7 @@
 import numpy as np
 
 # local imports
-from utils import get_logger
+from utils import get_logger, TIME_STEPS
 
 
 class Plant:
@@ -75,11 +75,28 @@ class Plant:
         # check matrices are all correct sizes
         if A.shape != (self.dims, self.dims) or B.shape != (self.dims, 1) or C.shape != (1, self.dims) or D.shape != (1, 1):
             raise ValueError('State-space matrices have incorrect dimensions.')
+        
+        # check eigenvalues of A have negative real part (for stability)
+        eigs = np.linalg.eigvals(A)
+        re_eigs = np.real(eigs)
+        if np.max(re_eigs) > 0 or np.sum(np.isclose(eigs, 0)) >= 2:
+            self.logger.warning(f'The plant is open-loop unstable. Eigenvalues of A: {eigs}.')
+        elif np.isclose(np.max(re_eigs), 0):
+            self.logger.warning(f'The plant is marginally stable (not asymptotically stable). Eigenvalues of A: {eigs}.')
         else:
-            self.A = A
-            self.B = B
-            self.C = C
-            self.D = D
+            # check that fastest plant time constant is not too small compared to sampling period (avoid numerical issues)
+            t_sample = TIME_STEPS['DT_ANIM']
+            min_time_constant = np.min(-1 / re_eigs)
+            if min_time_constant < 5 * t_sample:
+                self.logger.warning(f'Plant is asymptotically stable, but has fast dynamics compared to sampling period. '
+                    f'Numerical issues may arise. Eigenvalues of A: {eigs}. Sampling period: {t_sample}. '
+                    f'Fastest time constant: {min_time_constant}.')
+
+        # set state space matrices
+        self.A = A
+        self.B = B
+        self.C = C
+        self.D = D
 
     def set_noise_covariances(self, Q: np.ndarray = None, R: np.ndarray = None):
         '''
@@ -137,12 +154,14 @@ class Plant:
         - `t_stop` (float): stop time of integration
         - `dt` (float): step size for numerical integration
         #### Optional
-        - `hold_noise_const` (bool, default = False): if True, sample once at use it across all time steps. 
-        If False, sample new noise at each time step.
+        - `hold_noise_const` (bool, default = False): if True, sample once and use it across all time steps. 
+        If False, sample new noise at each `dt`.
         
         ### Returns
         - `tuple[np.ndarray, np.ndarray]`: arrays of time points and state trajectory (including both endpoints).
         '''
+
+        # TODO: use RK4 as the integration method rather than Euler's method
 
         t_span = np.arange(t_start, t_stop + dt, dt)  # shape (num_steps,)
         if t_span[-1] - t_stop > 0:

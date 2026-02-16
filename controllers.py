@@ -76,10 +76,12 @@ class OpenLoopController:
         Calculates the control input for an open-loop (feedforward) controller.
         This depends only on the current setpoint.
 
-        NOTE: if the plant's A matrix is singular (has an eigenvalue of zero), then the control input will 
-        always be zero. This is because there is no finite step input that can produce a steady-state value. 
-        In principle, we could instead apply an impulse input for one frame, using the formula: 
-        `u = e / (self.sim.dt_frame * C @ B)`, but this requires knowing the error `e` (and hence measurement), 
+        NOTE: if the plant's A matrix is singular (has an eigenvalue of zero), then
+        the control input will always be zero. This is because there is no
+        finite step input that can produce a steady-state value. 
+        
+        In principle, we could apply an impulse input for one frame, using the formula:
+        `u = e / (self.sim.dt_frame * C @ B)`, but this requires knowing the error (and hence measurement), 
         which is not allowed for an open-loop controller. Therefore, we choose not to implement this case
         and instead take u = 0.
 
@@ -133,51 +135,100 @@ class BangBangController:
         return u
 
 
+import numpy as np
+
+
 class PIDController:
+
+    # TODO: add anti-windup for integral term
+    # TODO: add function to calculate PID parameters based on integrated absolute error (IAE) optimality
+    # TODO: add function to calculate PID parameters based on integrated time-weighted absolute error (ITAE) optimality
+    # TODO: add function to calculate PID parameters based on Ziegler-Nichols tuning rules
+    # TODO: add function to calculate PID parameters based on Cohen-Coon tuning rules
+    # TODO: add function to calculate PID parameters based on pole placement, given n closed-loop poles
+
     def __init__(self, sim: object = None, plant: object = None):
         self.sim = sim
         self.plant = plant
-
         self.reset_memory()
 
     def reset_memory(self):
-        self.error_prev = np.array([[0.0]])
-        self.error_integrated = np.array([[0.0]])
+        '''
+        Resets the internal state of the PID controller: accumulated error used in the integral term, 
+        and previous measurement and derivative action used in filtered derivative.
+        '''
+        self.e_integrated = np.array([[0.0]])
+        self.y_meas_prev = np.array([[0.0]])
+        self.u_d_prev = np.array([[0.0]])
 
     def calc_u(self, e: np.ndarray) -> np.ndarray:
-        '''
-        Calculate the control input `u` based on the error `e`.
+        """
+        Compute PID control input using P and I on the error, and a low-pass filtered derivative on the measurement.
+        The filter is used to avoid excessive noise amplification from the derivative term. The frequency cutoff
+        of the low-pass filter can be set by the (reciprocal of) the time constant `tau` in the GUI.
 
         ### Arguments
         - `e`: error (difference in y: setpoint minus measurement). Shape: (1, 1)
 
         ### Returns
         - `u`: control input. Shape: (1, 1)
-        '''
+        """
+
         if not isinstance(e, np.ndarray) or e.shape != (1, 1):
-            raise ValueError('Error must be a single-element np.ndarray with shape (1, 1).')
+            raise ValueError("e must have shape (1,1)")
         
-        # get proportional component
+        y_meas = self.sim.y_sp - e  # get measurement
+
+        dt = self.sim.dt_anim  # sampling period
+
+        # proportional term
         u_p = self.sim.K_p * e
 
-        # get integral component
-        self.error_integrated += e * self.sim.dt_anim  # right rectangular method
-        u_i = self.sim.K_i * self.error_integrated
+        # integral term
+        self.e_integrated += e * dt
+        u_i = self.sim.K_i * self.e_integrated
 
-        # get derivative component
-        e_derivative = (e - self.error_prev) / self.sim.dt_anim  # backward difference method
-        u_d = self.sim.K_d * e_derivative
+        # filtered derivative on measurement
+        if self.sim.K_d == 0:
+            u_d = np.array([[0.0]])
+        else:
+            # low-pass filter time constant: use user-configured `tau` when available,
+            # otherwise fall back to 5x the sampling period
+            tau = getattr(self.sim, 'tau', max(5.0 * dt, 1e-6))
 
-        # update previous error
-        self.error_prev = e
+            # Tustin's method implementation of the first-order low-pass 
+            # filter on the derivative term, with input y and output u_d
+            alpha = 1.0 - dt / tau
+            alpha = max(min(alpha, 1.0), 0.0)
 
-        # compute control input
+            u_d = alpha * self.u_d_prev - (self.sim.K_d / tau) * (y_meas - self.y_meas_prev)
+            self.u_d_prev = u_d
+
+        # update stored noisy measurement
+        self.y_meas_prev = y_meas
+
+        # -------------------
+        # Total control
+        # -------------------
         u = u_p + u_i + u_d
         return u
 
+# TODO: implement the H2 optimal controller from first principles - 
+# do not just copy the below blindly as it gave suspicious results previously
+# allow the user to choose the performance output z = C1 @ x + C2 @ u (user sets weight matrices C1 and C2)
+# also add a function to compute the optimal H2 norm
+
+# TODO: implement the H-infinity optimal controller from first principles -
+# choose to use either the Riccati equation approach or the linear matrix inequality optimisation (solving with CVX),
+# could add a GUI setting to choose which approach to use
+# allow the user to choose the performance output z = C1 @ x + C2 @ u (user sets weight matrices C1 and C2)
+# also add a function to compute the optimal H-infinity norm
+
+# TODO: implement a model predictive controller (MPC), using OSQP to solve the quadratic program
+# allow the user to change the model matrices (may differ from actual plant), cost function weights and horizon length
+
 """
 # NOTE: this still uses the old interface - need to update - leave out for now
-# TODO: rebuilt from first principles - do not just copy the below, as there are some suspcious results
 
 class H2Controller:
 

@@ -26,6 +26,14 @@ from utils import make_slider_from_cfg, MAX_SIG_FIGS, ANIM_SPEED_FACTOR, GUI_SLI
 
 class GUI:
 
+    # TODO: add a checkbox in the PID parameters box to enable/disable anti-windup:
+    # if checked, show a 'u_sat' slider for the user to set the saturation limit for |u|
+    # TODO: add buttons under the PID parameters row to set Kp, Ki, Kd based on IAE, ITAE, 
+    # Ziegler-Nichols, Cohen-Coon, and pole placement, using functions implemented in controllers.py PIDController
+    # TODO: add a checkbox in the PID parameters box to enable/disable filtering on the derivative:
+    # if unchecked, the tau slider should be greyed out
+    # need to edit the function in controllers.py to respect this setting
+
     def __init__(self, sim: object, dump_logs_on_stop: bool = False):
 
         self.sim = sim
@@ -355,6 +363,7 @@ class GUI:
                 self.add_param('K_p', 'K_p')
                 self.add_param('K_i', 'K_i')
                 self.add_param('K_d', 'K_d')
+                self.add_param('tau', 'tau')
 
                 # reset PID memory button
                 reset_btn = QPushButton('Reset memory')
@@ -394,8 +403,7 @@ class GUI:
                 self.sim.controller_type = ControllerType.OPENLOOP
             case ControllerType.PID:
                 self.sim.controller_type = ControllerType.PID
-                self.sim.pid_controller.error_integrated = np.array([[0.0]])  # reset integral memory
-                # TODO: write a controller method `reset_memory()` and call it here
+                self.sim.pid_controller.reset_memory()
 
     def open_change_plant_dialog(self):
         """Show a dialog allowing the user to edit the plant state-space matrices.

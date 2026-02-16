@@ -14,26 +14,27 @@ from PyQt6.QtWidgets import QSlider, QHBoxLayout, QLabel, QWidget
 #########################
 
 # set to True to log to console and debug.log
-LOGGING_ON = False
+LOGGING_ON = True
 
 # default slider parameters for controllers and plant
 GUI_SLIDER_CONFIG = {
     'manual_u':      {'min': -5.0,  'max': 5.0,     'step': 0.1,    'init': 0.0},
     'y_sp':          {'min': -1.0,  'max': 1.0,     'step': 0.01,   'init': 1.0},
     'w_proc_stddev': {'min': 0.0,   'max': 2.0,     'step': 0.01,   'init': 0.0},
-    'w_meas_stddev': {'min': 0.0,   'max': 0.5,     'step': 0.01,   'init': 0.0},
-    'U_plus':        {'min': 0.0,   'max': 5.0,     'step': 0.1,    'init': 1.0},
-    'U_minus':       {'min': -5.0,  'max': 0.0,     'step': 0.1,    'init': -1.0},
-    'K_p':           {'min': 0.0,   'max': 200.0,   'step': 1.0,    'init': 10.0},
-    'K_i':           {'min': 0.0,    'max': 20.0,    'step': 0.05,   'init': 0.0},
-    'K_d':           {'min': 0.0,    'max': 50.0,    'step': 0.05,   'init': 0.0},
+    'w_meas_stddev': {'min': 0.0,   'max': 0.25,    'step': 0.005,  'init': 0.0},
+    'U_plus':        {'min': 0.0,   'max': 5.0,     'step': 0.1,    'init': 4.0},
+    'U_minus':       {'min': -5.0,  'max': 0.0,     'step': 0.1,    'init': -4.0},
+    'K_p':           {'min': 0.0,   'max': 200.0,   'step': 1.0,    'init': 20.0},
+    'K_i':           {'min': 0.0,   'max': 20.0,    'step': 0.05,   'init': 0.0},
+    'K_d':           {'min': 0.0,   'max': 50.0,    'step': 0.05,   'init': 0.0},
+    'tau':           {'min': 0.0001, 'max': 1.0,    'step': 0.001,  'init': 0.01},
 }
 
 # time step sizes for integration, animation and sliding window
 # it is better (but not required) to keep these as integer multiples of each other
 TIME_STEPS = {
     'DT_INT': 0.001,
-    'DT_ANIM': 0.020,
+    'DT_ANIM': 0.005,
     'DT_SLIDING_WINDOW': 5.000,
 }
 
@@ -49,7 +50,7 @@ ANIM_SPEED_FACTOR = 1.0
 MAX_SIG_FIGS = 10
 
 # controller parameters available in the GUI
-CONTROLLER_PARAMS_LIST = ['manual_u', 'K_p', 'K_i', 'K_d', 'U_plus', 'U_minus']
+CONTROLLER_PARAMS_LIST = ['manual_u', 'K_p', 'K_i', 'K_d', 'tau', 'U_plus', 'U_minus']
 
 # default process and measurement noise variances
 w_proc_var_init = GUI_SLIDER_CONFIG['w_proc_stddev']['init'] ** 2

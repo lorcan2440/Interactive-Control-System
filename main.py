@@ -156,8 +156,8 @@ class Simulation(QWidget):
         # update plant control input
         self.plant.u = u
 
-        if LOGGING_ON:
-            self.logger.debug(f'For frame starting at t = {t_start:.5f}: \t used u = {u.item():.10f}, \t y_sp = {self.y_sp.item():.5f}, \t y_meas = {self.plant.y_meas.item():.5f}, \t e = {e.item()}.')
+        #if LOGGING_ON:
+        #    self.logger.debug(f'For frame starting at t = {t_start:.5f}: \t used u = {u.item():.10f}, \t y_sp = {self.y_sp.item():.5f}, \t y_meas = {self.plant.y_meas.item():.5f}, \t e = {e.item()}.')
 
         # solve dynamics
         t_stop = t_start + self.dt_anim
