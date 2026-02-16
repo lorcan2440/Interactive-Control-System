@@ -58,15 +58,30 @@ class OpenLoopController:
     def calc_ss_gain(self):
         '''
         Calculate the steady-state gain of the plant. G(s) is the transfer function from u to y,
-        and the steady-state gain to a step change in u is |G(0)|.
+        and the steady-state gain to a step change in u is G(0).
         '''
-        self.G = lambda s: self.plant.C @ np.linalg.inv(s * np.eye(self.plant.dims) - self.plant.A) @ self.plant.B + self.plant.D
-        self.ss_gain = self.G(0)  # steady state gain of plant in open-loop conditions = G(0)
+        A, B, C, D = self.plant.A, self.plant.B, self.plant.C, self.plant.D
+        try:
+            # use the formula ss_gain = G(0), where G(s) is the transfer function from u to y
+            # since G(s) = C @ (sI - A)^(-1) @ B + D, we have G(0) = D - C @ A^(-1) @ B
+            # HACK: np.linalg.solve returns A^(-1) @ B with better numerical stability
+            self.ss_gain = D - C @ np.linalg.solve(A, B)
+        except np.linalg.LinAlgError:
+            self.logger.warning('''Plant A matrix is singular: step control inputs lead to unbounded outputs. 
+                Setting u = 0 for the open-loop controller.''')
+            self.ss_gain = np.inf
 
     def calc_u(self) -> np.ndarray:
         '''
         Calculates the control input for an open-loop (feedforward) controller.
         This depends only on the current setpoint.
+
+        NOTE: if the plant's A matrix is singular (has an eigenvalue of zero), then the control input will 
+        always be zero. This is because there is no finite step input that can produce a steady-state value. 
+        In principle, we could instead apply an impulse input for one frame, using the formula: 
+        `u = e / (self.sim.dt_frame * C @ B)`, but this requires knowing the error `e` (and hence measurement), 
+        which is not allowed for an open-loop controller. Therefore, we choose not to implement this case
+        and instead take u = 0.
 
         ### Returns
         - `u`: control input. Shape: (1, 1)
