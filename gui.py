@@ -33,6 +33,10 @@ class GUI:
     # TODO: add a checkbox in the PID parameters box to enable/disable filtering on the derivative:
     # if unchecked, the tau slider should be greyed out
     # need to edit the function in controllers.py to respect this setting
+    # TODO: add a Bode plot (shown to the right of the graphs) for the PID controller
+    # TODO: add a Nyquist plot (shown to the right of the graphs) for the PID controller
+    # TODO: add a Nichols plot (shown to the right of the graphs) for the PID controller
+    # TODO: add a root-locus plot (shown to the right of the graphs) for the PID controller
 
     def __init__(self, sim: object, dump_logs_on_stop: bool = False):
 

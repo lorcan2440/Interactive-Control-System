@@ -147,6 +147,8 @@ class PIDController:
     # TODO: add function to calculate PID parameters based on Ziegler-Nichols tuning rules
     # TODO: add function to calculate PID parameters based on Cohen-Coon tuning rules
     # TODO: add function to calculate PID parameters based on pole placement, given n closed-loop poles
+    # TODO: add function to calculate gain and phase (unwrapped using first-order terms) of the OLTF at given frequency,
+    # and calculate the gain and phase margin
 
     def __init__(self, sim: object = None, plant: object = None):
         self.sim = sim
