@@ -18,7 +18,9 @@ class GUI:
 
     # TODO: add the LaTeX equation (provided in the SVG image at media/state_space_model_black.svg)
     # at the top of the change plant model dialog. If possible, detect whether the dialog box
-    # is in dark mode or light mode and invert the colors of the SVG dynamically to white for dark mode
+    # is in dark mode or light mode and invert the colors of the SVG dynamically to white for dark mode.
+    # This could be done by searching and replacing "stroke="#000000" fill="#000000"" in the SVG string 
+    # (only occurs once) with "stroke="#FFFFFF" fill="#FFFFFF" when in dark mode.
     # TODO: add a checkbox in the PID parameters box to enable/disable anti-windup:
     # if checked, show a 'u_sat' slider for the user to set the saturation limit for |u|
     # TODO: add buttons under the PID parameters row to set Kp, Ki, Kd based on IAE, ITAE, 
