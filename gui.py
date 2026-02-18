@@ -14,6 +14,10 @@ from utils import make_slider_from_cfg, PLANT_DEFAULT_PARAMS, MAX_SIG_FIGS, ANIM
     GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
 
 
+pg.setConfigOption('background', '#222222')
+pg.setConfigOption('foreground', '#DDDDDD')
+
+
 class GUI:
 
     # TODO: add the LaTeX equation (provided in the SVG image at media/state_space_model_black.svg)

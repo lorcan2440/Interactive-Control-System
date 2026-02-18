@@ -179,6 +179,7 @@ class Simulation(QWidget):
 
 def main():
     app = QApplication(sys.argv)
+    #app.setStyle('FluentWinUI3')  # doesn't seem to change anything - try others
     sim = Simulation()
     sim.show()
     sys.exit(app.exec())
