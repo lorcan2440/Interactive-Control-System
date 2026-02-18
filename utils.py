@@ -36,7 +36,7 @@ GUI_SLIDER_CONFIG = {
 # make sure to re-run functions that depend on them (e.g. warnings about time step sizes)
 TIME_STEPS = {
     'DT_INT': 0.001,
-    'DT_ANIM': 0.005,
+    'DT_ANIM': 0.020,
     'DT_SLIDING_WINDOW': 5.000,
 }
 

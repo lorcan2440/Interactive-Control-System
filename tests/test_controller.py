@@ -3,12 +3,9 @@ import numpy as np
 import pytest
 
 # local imports
-from controllers import (
-    ManualController,
-    OpenLoopController,
-    BangBangController,
-    PIDController,
-)
+import __init__
+from controllers import ManualController, OpenLoopController, BangBangController, PIDController
+
 
 # TODO: improve these tests by testing real numbers manually
 
@@ -67,13 +64,16 @@ def test_manual_controller_returns_manual_u():
 
 
 def test_openloop_controller_computes_feedforward():
-    # create a trivial 1x1 plant with steady-state gain = C * inv(-A) * B
+    # simple 1D stable plant: A = -1, B = 2, C = 3, D = 0
+    # transfer function: G(s) = 6 / (s + 1)
+    # steady-state gain: G(0) = 6
+    # for a setpoint of y_sp = 5, we need u = 5/6 = 0.833...
     class Plant:
         def __init__(self):
             self.dims = 1
-            self.A = np.array([[-2.0]])
-            self.B = np.array([[1.0]])
-            self.C = np.array([[4.0]])
+            self.A = np.array([[-1.0]])
+            self.B = np.array([[2.0]])
+            self.C = np.array([[3.0]])
             self.D = np.array([[0.0]])
 
     sim = SimpleSim(y_sp=5.0)
@@ -82,8 +82,7 @@ def test_openloop_controller_computes_feedforward():
     u = controller.calc_u()
     assert isinstance(u, np.ndarray)
     assert u.shape == (1, 1)
-    # steady-state gain = 4 * (1/2) = 2 => u = 5 / 2 = 2.5
-    assert pytest.approx(u[0, 0], rel=1e-9) == pytest.approx(2.5, rel=1e-9)
+    assert pytest.approx(u[0, 0], rel=1e-9) == pytest.approx(5/6, rel=1e-9)
 
 
 def test_bangbang_controller_on_off_behaviour():
@@ -123,3 +122,6 @@ def test_pid_controller_p_i_d_terms_and_memory():
     # u_i = 1 * (2 * 0.1) = 0.2
     # u_d = 0
     assert pytest.approx(u2[0, 0], rel=1e-9) == pytest.approx(3.0, rel=1e-9)
+
+
+test_openloop_controller_computes_feedforward()

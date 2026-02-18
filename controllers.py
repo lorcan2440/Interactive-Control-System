@@ -64,13 +64,14 @@ class OpenLoopController:
         A, B, C, D = self.plant.A, self.plant.B, self.plant.C, self.plant.D
         try:
             # use the formula ss_gain = G(0), where G(s) is the transfer function from u to y
-            # since G(s) = C @ (sI - A)^(-1) @ B + D, we have G(0) = D - C @ A^(-1) @ B
+            # since G(s) = C @ (sI - A)^(-1) @ B + D, 
+            # we have G(0) = D - C @ A^(-1) @ B
             # HACK: np.linalg.solve returns A^(-1) @ B with better numerical stability
             self.ss_gain = D - C @ np.linalg.solve(A, B)
         except np.linalg.LinAlgError:
             self.logger.warning('''Plant A matrix is singular: step control inputs lead to unbounded outputs. 
                 Setting u = 0 for the open-loop controller.''')
-            self.ss_gain = np.inf
+            self.ss_gain = np.array([[np.inf]])
 
     def calc_u(self) -> np.ndarray:
         '''

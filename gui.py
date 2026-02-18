@@ -1,32 +1,24 @@
 # external imports
 import numpy as np
-from PyQt6.QtWidgets import (
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QGroupBox,
-    QRadioButton,
-    QPushButton,
-    QButtonGroup,
-    QDialog,
-    QDialogButtonBox,
-    QMessageBox,
-)
+from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, \
+    QButtonGroup, QDialog, QDialogButtonBox, QMessageBox, QWidget, QGridLayout, QSpinBox, QTableWidget, \
+    QTableWidgetItem, QStyledItemDelegate, QLineEdit
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QDoubleValidator
 import pyqtgraph as pg
 from pyqtgraph import GraphicsLayoutWidget, mkPen
 
-# local widget for editing matrices
-from state_space_input import StateSpaceMatrixInput
-
 # local imports
 from controllers import ControllerType
-from utils import make_slider_from_cfg, MAX_SIG_FIGS, ANIM_SPEED_FACTOR, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
+from utils import make_slider_from_cfg, PLANT_DEFAULT_PARAMS, MAX_SIG_FIGS, ANIM_SPEED_FACTOR, \
+    GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
 
 
 class GUI:
 
-    # TODO: allow the user to set the Q and R matrices for noise in the "change plant model" dialog box
+    # TODO: add the LaTeX equation (provided in the SVG image at media/state_space_model_black.svg)
+    # at the top of the change plant model dialog. If possible, detect whether the dialog box
+    # is in dark mode or light mode and invert the colors of the SVG dynamically to white for dark mode
     # TODO: add a checkbox in the PID parameters box to enable/disable anti-windup:
     # if checked, show a 'u_sat' slider for the user to set the saturation limit for |u|
     # TODO: add buttons under the PID parameters row to set Kp, Ki, Kd based on IAE, ITAE, 
@@ -68,11 +60,9 @@ class GUI:
 
     def clear_graph_traces(self):
 
-        # if graphs already exist, clear them
-        if hasattr(self, 'plot_x'):
-            self.plot_x.clear()
-        if hasattr(self, 'plot_u'):
-            self.plot_u.clear()
+        # fully clear graphics layout so old PlotItems/axes are removed
+        if hasattr(self, 'win'):
+            self.win.clear()
 
         # states and measurement plot
         self.plot_x = self.win.addPlot(row=0, col=0, title='States (x), Measurement (y_meas) and Setpoint (y_sp)')
@@ -156,7 +146,7 @@ class GUI:
         first_row_hbox.addWidget(controller_buttons_box)
         main_layout.addLayout(first_row_hbox)
 
-        ## 3) second row under graphs - setpoint and disturbances
+        ## 3) second row under graphs - setpoint
     
         second_hbox = QHBoxLayout()
 
@@ -174,33 +164,6 @@ class GUI:
         self.sp_label = val_label
         sp_group.setLayout(sp_layout)
         second_hbox.addWidget(sp_group, stretch=3)
-
-        # disturbances
-        dist_box = QGroupBox('Disturbances')
-        dist_layout = QHBoxLayout()
-        w1_cfg = GUI_SLIDER_CONFIG['w_proc_stddev']
-        w2_cfg = GUI_SLIDER_CONFIG['w_meas_stddev']
-
-        w1_box = QVBoxLayout()
-        w1_container, w1_slider, w1_val_label = make_slider_from_cfg('w_proc_stddev', 'Process Noise (w_proc)')
-        w1_slider.valueChanged.connect(self.on_w_slider_changed)
-        w1_val_label.setText(f'{w1_cfg.get("init", w1_cfg["min"]):.3f}')
-        w1_box.addWidget(w1_container)
-        self.slider_w1 = w1_slider
-        self.w1_label = w1_val_label
-
-        w2_box = QVBoxLayout()
-        w2_container, w2_slider, w2_val_label = make_slider_from_cfg('w_meas_stddev', 'Measurement Noise (w_meas)')
-        w2_slider.valueChanged.connect(self.on_w_slider_changed)
-        w2_val_label.setText(f'{w2_cfg.get("init", w2_cfg["min"]):.3f}')
-        w2_box.addWidget(w2_container)
-        self.slider_w2 = w2_slider
-        self.w2_label = w2_val_label
-
-        dist_layout.addLayout(w1_box)
-        dist_layout.addLayout(w2_box)
-        dist_box.setLayout(dist_layout)
-        second_hbox.addWidget(dist_box, stretch=4)
 
         main_layout.addLayout(second_hbox)
 
@@ -316,26 +279,6 @@ class GUI:
         self.sp_label.setText(f'{sp:.2f}')
         self.sim.y_sp = np.array([[sp]])
 
-    def on_w_slider_changed(self, _val: int):
-        # update both plant noise covariances
-
-        # w1: process noise stddev
-        cfg_w1 = GUI_SLIDER_CONFIG['w_proc_stddev']
-        w1_sigma = cfg_w1['min'] + int(self.slider_w1.value()) * cfg_w1['step']
-        self.w1_label.setText(f'{w1_sigma:.3f}')
-
-        # w2: measurement noise stddev
-        cfg_w2 = GUI_SLIDER_CONFIG['w_meas_stddev']
-        w2_sigma = cfg_w2['min'] + int(self.slider_w2.value()) * cfg_w2['step']
-        self.w2_label.setText(f'{w2_sigma:.3f}')
-
-        # NOTE: only one process noise slider - Q is diagonal (uncorrelated) with identical entries
-        # TODO: allow user-defined matrices for Q and R
-        Q = np.diag([w1_sigma ** 2 for _ in range(self.sim.plant.dims)])
-        R = np.array([[w2_sigma ** 2]])
-
-        self.sim.plant.set_noise_covariances(Q=Q, R=R)
-
     def on_controller_selected(self, controller_type: ControllerType):
         if controller_type is not self.sim.controller_type:
             self.sim.controller_type = controller_type
@@ -444,13 +387,15 @@ class GUI:
             # pre-fill with current plant matrices if available
             A, B, C, D = self.sim.plant.A, self.sim.plant.B, self.sim.plant.C, self.sim.plant.D
             widget.set_matrices(np.asarray(A), np.asarray(B), np.asarray(C), np.asarray(D))
+            Q, R = self.sim.plant.Q, self.sim.plant.R
+            widget.set_noise_matrices(np.asarray(Q), np.asarray(R))
 
             dlg_layout.addWidget(widget)
 
             eig_label = QLabel('Eigenvalues:')
             dlg_layout.addWidget(eig_label)
 
-            def _update_eigs():
+            def _update_eigs(*_):
                 try:
                     A_cur, _, _, _ = widget.get_matrices()
                 except Exception:
@@ -465,14 +410,8 @@ class GUI:
                     eig_label.setText('Eigenvalues: (error)')
 
             # update eigenvalues when A is edited or dims change
-            try:
-                widget._table_A.itemChanged.connect(lambda _it: _update_eigs())
-            except Exception:
-                pass
-            try:
-                widget._spin.valueChanged.connect(lambda _v: _update_eigs())
-            except Exception:
-                pass
+            widget.table_A.itemChanged.connect(_update_eigs)
+            widget.spin.valueChanged.connect(_update_eigs)
 
             # initialise eigenvalue display
             _update_eigs()
@@ -499,37 +438,249 @@ class GUI:
         # called when "OK" is clicked in the change plant dialog box
 
         A_new, B_new, C_new, D_new = widget.get_matrices()
+        Q_new, R_new = widget.get_noise_matrices()
 
         try:
             # apply new matrices to plant
             self.sim.plant.set_state_space_matrices(A_new, B_new, C_new, D_new)
+            self.sim.plant.set_noise_covariances(Q=Q_new, R=R_new)
 
-        except ValueError:
-            # dims was changed: attempt to reconfigure the plant to the new size,
-            # reset buffers and rebuild plots so the simulation can resume.
-            new_dims = A_new.shape[0]
-            self.logger.info(f'Plant dimensions changed: {self.sim.plant.dims} -> {new_dims}. Re-initialising plant and clearing buffers.')
+        except ValueError as e:
+            if str(e) == "State-space matrices have incorrect dimensions.":
+                # dims was changed: attempt to set the plant to the new size,
+                # reset buffers and rebuild plots so the simulation can resume.
+                new_dims = A_new.shape[0]
+                self.logger.info(f'Plant dimensions changed: {self.sim.plant.dims} -> {new_dims}. Re-initialising plant and clearing buffers.')
 
-            # update plant dimension and initial state shapes
-            self.sim.plant.dims = int(new_dims)
-            self.sim.plant.x_0 = np.zeros((new_dims, 1))
-            self.sim.plant.x = self.sim.plant.x_0.copy()
-            self.sim.plant.u_0 = getattr(self.sim.plant, 'u_0', np.array([[0.0]]))
-            self.sim.plant.u = self.sim.plant.u_0.copy()
+                # update plant dimension and initial state shapes
+                self.sim.plant.dims = int(new_dims)
+                self.sim.plant.x_0 = np.zeros((new_dims, 1))
+                self.sim.plant.x = self.sim.plant.x_0.copy()
+                self.sim.plant.u_0 = getattr(self.sim.plant, 'u_0', np.array([[0.0]]))
+                self.sim.plant.u = self.sim.plant.u_0.copy()
+
+            if str(e) in ("Noise covariance matrices Q and R have incorrect dimensions.", 
+                          "Process noise covariance matrix Q must be symmetric.",
+                          "Noise covariance matrices Q and R must be positive semidefinite."):
+                QMessageBox.warning(dialog, 'Invalid noise covariance matrices', str(e))
+                return
 
             # apply the new state-space matrices
             self.sim.plant.set_state_space_matrices(A_new, B_new, C_new, D_new)
-            R_old = getattr(self.sim.plant, 'R', np.array([[0.0]]))
-            Q_new = np.zeros((new_dims, new_dims))
-            self.sim.plant.set_noise_covariances(Q=Q_new, R=R_old)
+            self.sim.plant.set_noise_covariances(Q=Q_new, R=R_new)
 
             # clear data buffers and graph areas
             self.clear_buffers()
             self.clear_graph_traces()
 
-        else:
-            # for controllers that use plant matrices (e.g. open-loop), recalculate their needed params
-            self.sim.openloop_controller.calc_ss_gain()
-            self.sim.pid_controller.reset_memory()
+        # for controllers that use plant matrices, recalculate any of their needed params
+        self.sim.openloop_controller.calc_ss_gain()
+        self.sim.pid_controller.reset_memory()
 
         dialog.accept()
+
+
+class StateSpaceMatrixInput(QWidget):
+    """Widget to edit continuous-time state-space and noise matrices A, B, C, D, Q, R.
+
+    Public API:
+        get_matrices() -> (A, B, C, D)
+    """
+
+    def __init__(self, parent=None, initial_dims: int = PLANT_DEFAULT_PARAMS['dims']):
+        super().__init__(parent)
+
+        self.dims = max(1, int(initial_dims))
+
+        self.delegate = FloatDelegate()
+
+        self.spin = QSpinBox()
+        self.spin.setMinimum(1)
+        self.spin.setValue(self.dims)
+        self.spin.valueChanged.connect(self.on_dims_changed)
+
+        lbl = QLabel('State dimension')
+        top_layout = QVBoxLayout()
+        header_layout = QGridLayout()
+        header_layout.addWidget(lbl, 0, 0)
+        header_layout.addWidget(self.spin, 0, 1)
+        top_layout.addLayout(header_layout)
+
+        # matrices: use QTableWidget for each
+        self.table_A = QTableWidget()
+        self.table_B = QTableWidget()
+        self.table_C = QTableWidget()
+        self.table_D = QTableWidget()
+        self.table_Q = QTableWidget()
+        self.table_R = QTableWidget()
+
+        for t in (self.table_A, self.table_B, self.table_C, self.table_D, self.table_Q, self.table_R):
+            t.setItemDelegate(self.delegate)
+            t.verticalHeader().setVisible(False)
+            t.setMinimumSize(160, 80)
+
+        grid = QGridLayout()
+        grid.addWidget(QLabel('A'), 0, 0)
+        grid.addWidget(self.table_A, 1, 0)
+        grid.addWidget(QLabel('B'), 0, 1)
+        grid.addWidget(self.table_B, 1, 1)
+        grid.addWidget(QLabel('C'), 2, 0)
+        grid.addWidget(self.table_C, 3, 0)
+        grid.addWidget(QLabel('D'), 2, 1)
+        grid.addWidget(self.table_D, 3, 1)
+        grid.addWidget(QLabel('Q'), 0, 2)
+        grid.addWidget(self.table_Q, 1, 2)
+        grid.addWidget(QLabel('R'), 2, 2)
+        grid.addWidget(self.table_R, 3, 2)
+
+        top_layout.addLayout(grid)
+        self.setLayout(top_layout)
+
+        self.col_width = 80
+        self.resize_all(self.dims)
+
+    def on_dims_changed(self, val: int):
+        val = max(1, int(val))
+        self.dims = val
+        self.resize_all(val)
+
+    def fill_table_with_zeros(self, table: QTableWidget, rows: int, cols: int):
+        table.clearContents()
+        table.setRowCount(rows)
+        table.setColumnCount(cols)
+        for c in range(cols):
+            table.setColumnWidth(c, self.col_width)
+        for r in range(rows):
+            for c in range(cols):
+                item = QTableWidgetItem('0.0')
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                table.setItem(r, c, item)
+
+    def resize_all(self, dims: int):
+        self.fill_table_with_zeros(self.table_A, dims, dims)
+        self.fill_table_with_zeros(self.table_B, dims, 1)
+        self.fill_table_with_zeros(self.table_C, 1, dims)
+        self.fill_table_with_zeros(self.table_D, 1, 1)
+        self.fill_table_with_zeros(self.table_Q, dims, dims)
+        self.fill_table_with_zeros(self.table_R, 1, 1)
+
+    def set_matrices(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray):
+        """Set the table contents from numpy arrays. Shapes must match dims.
+
+        This will resize the internal tables to match the provided `A` shape.
+        """
+        A = np.asarray(A)
+        B = np.asarray(B)
+        C = np.asarray(C)
+        D = np.asarray(D)
+
+        if A.ndim != 2 or A.shape[0] != A.shape[1]:
+            raise ValueError('A must be square')
+        dims = int(A.shape[0])
+
+        if B.shape != (dims, 1) or C.shape != (1, dims) or D.shape != (1, 1):
+            raise ValueError('Matrix shapes do not match')
+
+        # set spin to trigger resizing
+        self.spin.blockSignals(True)
+        try:
+            self.spin.setValue(dims)
+            self.dims = dims
+            self.resize_all(dims)
+        finally:
+            self.spin.blockSignals(False)
+
+        # fill tables
+        for i in range(dims):
+            for j in range(dims):
+                self.table_A.item(i, j).setText(f'{float(A[i, j]):.6g}')
+
+        for i in range(dims):
+            self.table_B.item(i, 0).setText(f'{float(B[i, 0]):.6g}')
+
+        for j in range(dims):
+            self.table_C.item(0, j).setText(f'{float(C[0, j]):.6g}')
+
+        self.table_D.item(0, 0).setText(f'{float(D[0, 0]):.6g}')
+
+    def set_noise_matrices(self, Q: np.ndarray, R: np.ndarray):
+        Q = np.asarray(Q)
+        R = np.asarray(R)
+        if Q.shape != (self.dims, self.dims) or R.shape != (1, 1):
+            raise ValueError('Noise matrix shapes do not match')
+
+        for i in range(self.dims):
+            for j in range(self.dims):
+                self.table_Q.item(i, j).setText(f'{float(Q[i, j]):.6g}')
+        self.table_R.item(0, 0).setText(f'{float(R[0, 0]):.6g}')
+
+    def get_matrices(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Return (A, B, C, D) as numpy arrays of shapes (dims, dims), (dims, 1), (1, dims), (1, 1).
+        Raises ValueError if any cell is empty or contains invalid float.
+        """
+        try:
+            A = np.zeros((self.dims, self.dims), dtype=float)
+            for i in range(self.dims):
+                for j in range(self.dims):
+                    cell_val = self.table_A.item(i, j)
+                    if cell_val is None or cell_val.text().strip() == '':
+                        raise ValueError('Matrix contains empty or invalid entries')
+                    A[i, j] = float(cell_val.text())
+
+            B = np.zeros((self.dims, 1), dtype=float)
+            for i in range(self.dims):
+                cell_val = self.table_B.item(i, 0)
+                if cell_val is None or cell_val.text().strip() == '':
+                    raise ValueError('Matrix contains empty or invalid entries')
+                B[i, 0] = float(cell_val.text())
+
+            C = np.zeros((1, self.dims), dtype=float)
+            for j in range(self.dims):
+                cell_val = self.table_C.item(0, j)
+                if cell_val is None or cell_val.text().strip() == '':
+                    raise ValueError('Matrix contains empty or invalid entries')
+                C[0, j] = float(cell_val.text())
+
+            cell_val = self.table_D.item(0, 0)
+            if cell_val is None or cell_val.text().strip() == '':
+                raise ValueError('Matrix contains empty or invalid entries')
+            D = np.array([[float(cell_val.text())]], dtype=float)
+
+            return A, B, C, D
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError('Matrix contains empty or invalid entries')
+
+    def get_noise_matrices(self) -> tuple[np.ndarray, np.ndarray]:
+        try:
+            Q = np.zeros((self.dims, self.dims), dtype=float)
+            for i in range(self.dims):
+                for j in range(self.dims):
+                    cell_val = self.table_Q.item(i, j)
+                    if cell_val is None or cell_val.text().strip() == '':
+                        raise ValueError('Matrix contains empty or invalid entries')
+                    Q[i, j] = float(cell_val.text())
+
+            cell_val = self.table_R.item(0, 0)
+            if cell_val is None or cell_val.text().strip() == '':
+                raise ValueError('Matrix contains empty or invalid entries')
+            R = np.array([[float(cell_val.text())]], dtype=float)
+            return Q, R
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError('Matrix contains empty or invalid entries')
+
+
+class FloatDelegate(QStyledItemDelegate):
+    """Item delegate that restricts editing in Qt cells to floating-point numbers."""
+
+    def createEditor(self, parent, option, index):
+        editor = QLineEdit(parent)
+        validator = QDoubleValidator()
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        editor.setValidator(validator)
+        editor.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        return editor
