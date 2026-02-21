@@ -184,3 +184,32 @@ def make_slider_from_cfg(key: str, display_name: str = None,
     container.setLayout(row)
 
     return container, slider, val_label
+
+def get_t_span(t_start: float, t_stop: float, dt: float) -> np.ndarray:
+    """
+    Get an array of time points from t_start to t_stop with step size dt.
+
+    The last time point will be exactly t_stop, even if it is not an integer multiple of dt from t_start.
+
+    Args:
+        t_start: start time.
+        t_stop: stop time.
+        dt: time step size.
+
+    Returns:
+        np.ndarray of shape (num_steps,) containing the time points.
+    """
+
+    if dt <= 0:
+        raise ValueError(f"Time step dt must be > 0 (got {dt})")
+    
+    EPS = 10 ** (-1 * MAX_SIG_FIGS)
+
+    t_span = np.arange(t_start, t_stop + dt, dt)
+    if t_span[-1] - t_stop > 0:
+        if np.isclose(t_span[-1], t_stop, atol=EPS):
+            t_span[-1] = t_stop
+        else:
+            t_span = t_span[:-1]
+
+    return t_span

@@ -3,7 +3,8 @@ import numpy as np
 import pytest
 
 # local imports
-import __init__
+if __name__ == '__main__':
+    import __init__
 from controllers import ManualController, OpenLoopController, BangBangController, PIDController
 
 

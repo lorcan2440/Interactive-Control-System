@@ -1,8 +1,11 @@
 # external imports
 import pytest
 import numpy as np
+import time
 
 # local imports
+if __name__ == '__main__':
+    import __init__
 from plant import Plant
 
 
@@ -145,3 +148,42 @@ def test_dynamics(plant_factory):
     t_span, x_span = plant.integrate_dynamics(t_start=0.0, t_stop=(n - 1) * dt, dt=dt, hold_noise_const=True)
     assert np.array_equal(x_span[:, 0], np.array([0.0, 0.0]))  # check initial state
     assert np.allclose(x_span[:, -1], np.array([2.1, 1.0]), atol=0.5)  # check final state (near [2.1, 1.0]), bigger tolerance
+
+
+def test_integrate_dynamics_speed_comparison(plant_factory):
+
+    # keep horizon at one animation frame for simplicity
+    t_start = 0.0
+    t_stop = 1 / 60
+    dt = 0.001
+    warmup = 20
+    repeats = 1000
+
+    def measure(method: str) -> float:
+        plant = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
+        plant.set_noise_covariances(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
+
+        # warm-up to reduce one-time overhead in the measured loop
+        for _ in range(warmup):
+            plant.x = plant.x_0.copy()
+            plant.integrate_dynamics(t_start=t_start, t_stop=t_stop, dt=dt, method=method,
+                hold_noise_const=True)
+
+        # start timing
+        t0 = time.perf_counter()
+        for _ in range(repeats):
+            plant.x = plant.x_0.copy()
+            plant.integrate_dynamics(t_start=t_start, t_stop=t_stop, dt=dt, method=method,
+                hold_noise_const=True)
+        return time.perf_counter() - t0
+
+    numerical_time = measure('numerical')
+    analytic_time = measure('analytic')
+
+    # use pytest -s to view this manually
+    print(f'Numerical time: {numerical_time:.6f}s, Analytic time: {analytic_time:.6f}s')
+
+    assert analytic_time < numerical_time, (
+        'Expected analytic integration to be faster than numerical integration. '
+        f'numerical={numerical_time:.6f}s, analytic={analytic_time:.6f}s'
+    )
