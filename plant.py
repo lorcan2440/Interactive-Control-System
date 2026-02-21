@@ -7,7 +7,6 @@ from utils import get_logger, TIME_STEPS
 
 class Plant:
 
-    # TODO: use RK4 as the integration method rather than Euler's method
     # TODO: add function to compute time constant and delay of the equivalent FOPDT (reduced order) plant model,
     # using Skogestad's half rule. This can be used in the PID tuning rules.
 
@@ -188,8 +187,8 @@ class Plant:
         else:
             w_proc = self.sample_process_noise(n=num_steps)
 
-        # get control input
-        u = np.tile(self.u, (1, num_steps))  # shape (1, num_steps)
+        # define the function on the RHS of the update equation: x' = Ax + Bu + w_proc
+        x_dot = lambda x, u, w_proc: self.A @ x + self.B @ u + w_proc
 
         for i in range(num_steps - 1):
 
@@ -199,22 +198,17 @@ class Plant:
             # get noise values at t_i
             w_proc_i = w_proc[:, i].reshape(self.dims, 1)
 
-            # get control input
-            u_i = u[:, i].reshape(1, 1)
-
-            # integrate the update equation: x' = Ax + Bu + w_proc
-            x_dot_i = lambda x: self.A @ x + self.B @ u_i + w_proc_i
-
             # use Runge-Kutta 4th order method (RK4) with fixed step size dt_int
             # NOTE: dt may be different for the last step, so we use t_span[i + 1] - t_i instead of dt here
+            # NOTE: the control input is constant across the frame, so we always use self.u
             dt_i = t_span[i + 1] - t_i
             x_i = x_span[:, i].reshape(self.dims, 1)  # shape (dims, 1)
-            k1 = x_dot_i(x_i)
-            k2 = x_dot_i(x_i + 0.5 * k1 * dt_i)
-            k3 = x_dot_i(x_i + 0.5 * k2 * dt_i)
-            k4 = x_dot_i(x_i + k3 * dt_i)
-            x_dot_i_adj = (k1 + 2 * k2 + 2 * k3 + k4) / 6  # x' at t_i, adjusted by RK4
-            x_span[:, i + 1] = x_span[:, i] + x_dot_i_adj.flatten() * dt_i  # shape (dims,)
+            k1 = x_dot(x_i, self.u, w_proc_i)
+            k2 = x_dot(x_i + 0.5 * k1 * dt_i, self.u, w_proc_i)
+            k3 = x_dot(x_i + 0.5 * k2 * dt_i, self.u, w_proc_i)
+            k4 = x_dot(x_i + k3 * dt_i, self.u, w_proc_i)
+            x_dot_i = (k1 + 2 * k2 + 2 * k3 + k4) / 6  # x' at t_i, adjusted by RK4
+            x_span[:, i + 1] = x_span[:, i] + x_dot_i.flatten() * dt_i  # shape (dims,)
 
         # store final state in plant attributes
         # this becomes the initial state for the next time span when `integrate_dyamics` is called again
