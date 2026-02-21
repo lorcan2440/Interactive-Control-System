@@ -1,9 +1,14 @@
+# built-ins
+import csv
+from datetime import datetime
+from pathlib import Path
+
 # external imports
 import numpy as np
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, \
     QButtonGroup, QDialog, QDialogButtonBox, QMessageBox, QWidget, QGridLayout, QSpinBox, QTableWidget, \
     QTableWidgetItem, QStyledItemDelegate, QLineEdit
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QDoubleValidator
 import pyqtgraph as pg
 from pyqtgraph import GraphicsLayoutWidget, mkPen
@@ -53,6 +58,10 @@ class GUI:
         # controller UI bookkeeping
         self.sim.controller_type = ControllerType.MANUAL
         self.controller_param_widgets = {}
+        self.is_csv_logging = False
+        self.csv_log_file = None
+        self.csv_writer = None
+        self.csv_log_path = None
 
     def clear_buffers(self):
 
@@ -117,6 +126,11 @@ class GUI:
         self.start_stop_button = QPushButton('Start')
         self.start_stop_button.clicked.connect(self.toggle_start_stop)
         first_row_hbox.addWidget(self.start_stop_button)
+
+        # start/stop CSV logging button
+        self.logging_button = QPushButton('Start Logging')
+        self.logging_button.clicked.connect(self.toggle_csv_logging)
+        first_row_hbox.addWidget(self.logging_button)
 
         # change plant model button
         self.change_plant_button = QPushButton('Change plant model')
@@ -253,7 +267,62 @@ class GUI:
         self.plot_u.setXRange(max(0, self.t_data[-1] - self.sim.dt_window), 
                               max(self.sim.dt_window, self.t_data[-1]))
 
+        if self.is_csv_logging:
+            self.write_realtime_log_line()
+
     ## UI callbacks
+
+    def toggle_csv_logging(self):
+        if not self.is_csv_logging:
+            self.start_csv_logging()
+        else:
+            self.stop_csv_logging()
+
+    def start_csv_logging(self):
+        output_dir = Path('output')
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        self.csv_log_path = output_dir / f'simulation_log_{timestamp}.csv'
+
+        try:
+            self.csv_log_file = open(self.csv_log_path, 'w', newline='', encoding='utf-8')
+            self.csv_writer = csv.writer(self.csv_log_file)
+            self.csv_writer.writerow(['t', 'u', 'x', 'y'])
+            self.csv_log_file.flush()
+        except OSError as e:
+            self.csv_log_file = None
+            self.csv_writer = None
+            self.csv_log_path = None
+            QMessageBox.warning(self.sim, 'Failed to start logging', str(e))
+            return
+
+        self.is_csv_logging = True
+        self.logging_button.setText('Stop Logging')
+
+    def stop_csv_logging(self):
+        if self.csv_log_file is not None:
+            try:
+                self.csv_log_file.close()
+            except OSError:
+                pass
+        self.is_csv_logging = False
+        self.csv_writer = None
+        self.csv_log_file = None
+        self.logging_button.setText('Start Logging')
+
+    def write_realtime_log_line(self):
+        if self.csv_writer is None or self.csv_log_file is None:
+            return
+
+        t = float(self.t_data[-1])
+        u = float(self.u_data[-1])
+        x = self.x_data[:, -1].tolist()
+        y = float(self.y_data[0, -1])
+
+        line = f'[{t:.6f}, {u:.6f}, {x}, {y:.6f}]'
+        self.csv_writer.writerow([f'{t:.6f}', f'{u:.6f}', str(x), f'{y:.6f}'])
+        self.csv_log_file.flush()
+        self.logger.info(line)
 
     def toggle_start_stop(self):
         # toggle the simulation ticker on and off
