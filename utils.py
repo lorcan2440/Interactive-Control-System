@@ -35,7 +35,7 @@ GUI_SLIDER_CONFIG = {
 # TODO: add a button in the GUI to allow the user to change these time steps
 # make sure to re-run functions that depend on them (e.g. warnings about time step sizes)
 TIME_STEPS = {
-    'DT_INT': 0.005,
+    'DT_INT': 0.001,
     'DT_ANIM': 1 / 60,  # 60 FPS
     'DT_SLIDING_WINDOW': 10.000,
 }

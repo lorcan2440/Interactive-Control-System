@@ -3,7 +3,7 @@
 
 # built-ins
 import sys
-import time
+from time import perf_counter
 
 # external imports
 import numpy as np
@@ -14,8 +14,7 @@ from PyQt6.QtCore import QTimer
 from plant import Plant
 from controllers import ControllerType, ManualController, OpenLoopController, BangBangController, PIDController
 from gui import GUI
-from utils import get_logger, MAX_FRAMES_PER_TICK, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, \
-    PLANT_DEFAULT_PARAMS, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST, ANIM_SPEED_FACTOR
+from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAULT_PARAMS, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST, ANIM_SPEED_FACTOR, MAX_FRAMES_PER_TICK
 
 
 class Simulation(QWidget):
@@ -61,12 +60,9 @@ class Simulation(QWidget):
             self.logger.disabled = True
 
         # set time step sizes
-        # dt_int: integration step size dt for solving state update equations
-        self.dt_int = TIME_STEPS['DT_INT']
-        # dt_anim: animation (frame) and control loop time step (= real time between frames, if no limiting factors)
-        self.dt_anim = TIME_STEPS['DT_ANIM']
-        # dt_window: time window size for sliding window plot
-        self.dt_window = TIME_STEPS['DT_SLIDING_WINDOW']
+        self.dt_int = TIME_STEPS['DT_INT']  # integration time step for solving dynamics
+        self.dt_anim = TIME_STEPS['DT_ANIM']  # animation (frame) and control loop time step
+        self.dt_window = TIME_STEPS['DT_SLIDING_WINDOW']  # time window size for sliding window plot
 
         # present time
         self.t = 0.0
@@ -105,39 +101,34 @@ class Simulation(QWidget):
 
         # initially stopped
         self.running = False
-
-        # track elapsed wall time - simulation progression is based on real time
         self.wall_time_prev = None
         self.sim_time_remainder = 0.0
 
     def update_frame(self):
         '''
         Update the simulation for one frame of the interactive control loop. 
-        This is called by a timer every `self.dt_anim` seconds.
+        This is called by a timer and advances simulation time based on elapsed wall time.
         '''
-        # accumulate elapsed real time scaled to simulation time
-        t_now = time.perf_counter()
+        now = perf_counter()
+
+        # first tick after start: advance one nominal frame to avoid an initial dead tick
         if self.wall_time_prev is None:
-            self.wall_time_prev = t_now
+            sim_elapsed = self.dt_anim
+        else:
+            sim_elapsed = (now - self.wall_time_prev) * ANIM_SPEED_FACTOR
+        self.wall_time_prev = now
+
+        self.sim_time_remainder += sim_elapsed
+        n_frames = int(self.sim_time_remainder / self.dt_anim)
+        if n_frames <= 0:
             return
 
-        self.sim_time_remainder += (t_now - self.wall_time_prev) * ANIM_SPEED_FACTOR
-        self.wall_time_prev = t_now
+        n_frames = min(n_frames, MAX_FRAMES_PER_TICK)
+        self.sim_time_remainder -= n_frames * self.dt_anim
 
-        # consume available simulation-time budget in fixed dt_anim chunks
-        frames_done = 0
-        while self.sim_time_remainder + self.EPS >= self.dt_anim and frames_done < MAX_FRAMES_PER_TICK:
-            # get current time
-            t_start = self.t
-
-            # solve dynamics for this frame
-            t_span, x_span, y_span, y_meas = self.solve_one_frame(t_start)
-
-            # update GUI with new data
+        for _ in range(n_frames):
+            t_span, x_span, y_span, y_meas = self.solve_one_frame(self.t)
             self.gui.update_plots(t_span, x_span, y_span, y_meas)
-
-            self.sim_time_remainder -= self.dt_anim
-            frames_done += 1
 
     def solve_one_frame(self, t_start: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         '''
@@ -181,7 +172,10 @@ class Simulation(QWidget):
         # update plant control input
         self.plant.u = u
 
-        # solve dynamics over this frame (u is held constant)
+        #if LOGGING_ON:
+        #    self.logger.debug(f'For frame starting at t = {t_start:.5f}: \t used u = {u.item():.10f}, \t y_sp = {self.y_sp.item():.5f}, \t y_meas = {self.plant.y_meas.item():.5f}, \t e = {e.item()}.')
+
+        # solve dynamics
         t_stop = t_start + self.dt_anim
         t_span, x_span = self.plant.integrate_dynamics(t_start=t_start, t_stop=t_stop, dt=self.dt_int)
 
@@ -191,7 +185,7 @@ class Simulation(QWidget):
         # get measurement noise at end of frame
         self.plant.y_meas = y_span[0, -1] + self.plant.sample_measurement_noise(n=1)  # shape (1, 1)
 
-        # advance simulation time to end of this frame (= start of next frame)
+        # advance simulation time
         self.t = t_stop
 
         return t_span, x_span, y_span, self.plant.y_meas
