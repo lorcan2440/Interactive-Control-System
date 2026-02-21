@@ -8,7 +8,6 @@ https://github.com/user-attachments/assets/4b876526-36ec-4d46-a481-f202f1f5bdc2
 - [x] Feedforward control (aka open loop control)
 - [x] Bang-bang control (aka on/off control)
 - [x] PID control
-- [ ] H2 optimal control (aka LQG control)
 
 ## Requirements
 
@@ -64,19 +63,19 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Future controllers to be added at some point
+## Future features
+
+### Coming soon:
+
+- [ ] H2 optimal control (aka LQG control)
+- [ ] H∞ optimal control (solve by either CARE or LMI in CVX)
+- [ ] Bode, Nyquist and Nichols plots of the OLTF L(s) with gain/phase margins
+- [ ] Interactive pole placement for the OLTF L(s)
+
+### Coming eventually:
 
 - [ ] Lead-lag compensator
 - [ ] Sliding mode control (including boundary layer smoothing) - may replace bang-bang
 - [ ] Model predictive control (solve using OSQP)
-- [ ] H2 optimal control (aka LQG control)
-- [ ] H∞ optimal control (solve by either CARE or LMI in CVX)
 - [ ] Neural control (using LSTM)
 - [ ] Reinforcement learning control (using DDPG)
-
-## Other future to-dos
-
-- [ ] Plot the error signal e instead of the output y in the top subplot.
-- [ ] Show the poles of the OLTF L(s) in the complex plane and allow interactive pole placement.
-- [ ] Show a Bode/Nyquist plot of L(s) with the gain/phase margins and allow switching between them.
-- [ ] Add interactive loop-shaping to the lead-lag compensator
