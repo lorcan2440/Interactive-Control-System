@@ -6,7 +6,7 @@ import time
 # local imports
 if __name__ == '__main__':
     import __init__
-from plant import Plant
+from plant import Plant, IntegratorType
 
 
 # set fixed seed for reproducibility of noise sampling
@@ -61,34 +61,34 @@ def test_set_state_space_matrices(plant_factory):
                                        D=np.array([[0, 0]]))  # D has wrong shape
 
 
-def test_set_noise_covariances(plant_factory):
+def test_set_noise_matrices(plant_factory):
 
     # init
     plant = plant_factory()
 
     # test defaults
-    plant.set_noise_covariances()
+    plant.set_noise_matrices()
     assert np.array_equal(plant.Q, np.zeros((2, 2)))
     assert np.array_equal(plant.R, np.zeros((1, 1)))
 
-    # test valid covariances
+    # test valid noise matrices
     Q = np.array([[1.0, 0.5], [0.5, 2.0]])
     R = np.array([[2.0]])
-    plant.set_noise_covariances(Q=Q, R=R)
+    plant.set_noise_matrices(Q=Q, R=R)
     assert np.array_equal(plant.Q, Q)
     assert np.array_equal(plant.R, R)
 
-    # test invalid noise covariances - R has wrong shape
+    # test invalid noise matrices - R has wrong shape
     with pytest.raises(ValueError):
-        plant.set_noise_covariances(R=np.array([[1.0, 0.5], [0.5, 1.0]]))
+        plant.set_noise_matrices(R=np.array([[1.0, 0.5], [0.5, 1.0]]))
     
-    # test invalid noise covariances - Q is not symmetric
+    # test invalid noise matrices - Q is not symmetric
     with pytest.raises(ValueError):
-        plant.set_noise_covariances(Q=np.array([[1.0, 0.5], [0.0, 1.0]]))
+        plant.set_noise_matrices(Q=np.array([[1.0, 0.5], [0.0, 1.0]]))
 
-    # test invalid noise covariances - Q is not positive semidefinite
+    # test invalid noise matrices - Q is not positive semidefinite
     with pytest.raises(ValueError):
-        plant.set_noise_covariances(Q=np.array([[0.05, 0.1], [0.1, 0.05]]))
+        plant.set_noise_matrices(Q=np.array([[0.05, 0.1], [0.1, 0.05]]))
 
 
 def test_sample_noise(plant_factory):
@@ -105,7 +105,7 @@ def test_sample_noise(plant_factory):
     assert w_proc.shape == (2, num_samples)
     assert w_meas.shape == (1, num_samples)
 
-    # the factory default provides a plant with nonzero noise covariances
+    # the factory default provides a plant with nonzero noise matrices
     # process noise has zero variance in compartment 1
     assert np.allclose(w_proc[0, :], 0.0)
     # process noise has nonzero variance in compartment 2
@@ -121,8 +121,9 @@ def test_dynamics(plant_factory):
 
     # Case 1: relaxation response, no process noise
     plant = plant_factory(x_0=np.array([[1.0], [1.0]]), u_0=np.array([[0.0]]))
-    plant.set_noise_covariances(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))  # no noise
-    t_span, x_span = plant.integrate_dynamics(t_start=0.0, t_stop=(n - 1) * dt, dt=dt)
+    plant.set_noise_matrices(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))  # no noise
+    t_span, x_span = plant.integrate_dynamics(
+        t_start=0.0, t_stop=(n - 1) * dt, dt=dt, method=IntegratorType.RK4, use_ode_mode=True)
     assert t_span.shape == (n,)
     assert x_span.shape == (2, n)
     assert np.array_equal(x_span[:, 0], np.array([1.0, 1.0]))  # check initial state
@@ -130,41 +131,46 @@ def test_dynamics(plant_factory):
 
     # Case 2: step response, no process noise
     plant = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-    plant.set_noise_covariances(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))  # no noise
-    t_span, x_span = plant.integrate_dynamics(t_start=0.0, t_stop=(n - 1) * dt, dt=dt)
+    plant.set_noise_matrices(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))  # no noise
+    t_span, x_span = plant.integrate_dynamics(
+        t_start=0.0, t_stop=(n - 1) * dt, dt=dt, method=IntegratorType.RK4, use_ode_mode=True)
     assert np.array_equal(x_span[:, 0], np.array([0.0, 0.0]))  # check initial state
     assert np.allclose(x_span[:, -1], np.array([2.1, 1.0]), atol=1e-2)  # check final state (near [2.1, 1.0])
 
     # Case 3: step response with process noise, allowed to vary
     plant = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-    plant.set_noise_covariances(Q=np.array([[0.0, 0.0], [0.0, 0.3**2]]))
-    t_span, x_span = plant.integrate_dynamics(t_start=0.0, t_stop=(n - 1) * dt, dt=dt, hold_noise_const=False)
+    plant.set_noise_matrices(Q=np.array([[0.0, 0.0], [0.0, 0.3**2]]))
+    t_span, x_span = plant.integrate_dynamics(
+        t_start=0.0, t_stop=(n - 1) * dt, dt=dt,
+        method=IntegratorType.EULER_MARUYAMA, use_ode_mode=False)
     assert np.array_equal(x_span[:, 0], np.array([0.0, 0.0]))  # check initial state
     assert np.allclose(x_span[:, -1], np.array([2.1, 1.0]), atol=0.5)  # check final state (near [2.1, 1.0]), bigger tolerance
 
     # Case 4: step response with process noise, held constant
     plant = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-    plant.set_noise_covariances(Q=np.array([[0.0, 0.0], [0.0, 0.3**2]]))
-    t_span, x_span = plant.integrate_dynamics(t_start=0.0, t_stop=(n - 1) * dt, dt=dt, hold_noise_const=True)
+    plant.set_noise_matrices(Q=np.array([[0.0, 0.0], [0.0, 0.3**2]]))
+    t_span, x_span = plant.integrate_dynamics(
+        t_start=0.0, t_stop=(n - 1) * dt, dt=dt,
+        method=IntegratorType.RK4, use_ode_mode=True)
     assert np.array_equal(x_span[:, 0], np.array([0.0, 0.0]))  # check initial state
     assert np.allclose(x_span[:, -1], np.array([2.1, 1.0]), atol=0.5)  # check final state (near [2.1, 1.0]), bigger tolerance
 
 
-def test_dynamics_analytic_hold_noise_const_false(plant_factory):
+def test_dynamics_analytic_use_ode_mode_false(plant_factory):
 
     # with zero process noise, both analytic branches should give the same trajectory
     dt = 0.001
     t_stop = 1 / 60
 
     plant_false = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-    plant_false.set_noise_covariances(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
+    plant_false.set_noise_matrices(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
     _, x_false = plant_false.integrate_dynamics(
-        t_start=0.0, t_stop=t_stop, dt=dt, method='analytic', hold_noise_const=False)
+        t_start=0.0, t_stop=t_stop, dt=dt, method=IntegratorType.ANALYTIC_SDE, use_ode_mode=False)
 
     plant_true = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-    plant_true.set_noise_covariances(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
+    plant_true.set_noise_matrices(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
     _, x_true = plant_true.integrate_dynamics(
-        t_start=0.0, t_stop=t_stop, dt=dt, method='analytic', hold_noise_const=True)
+        t_start=0.0, t_stop=t_stop, dt=dt, method=IntegratorType.ANALYTIC_ODE, use_ode_mode=True)
 
     assert np.allclose(x_false, x_true)
 
@@ -178,26 +184,26 @@ def test_integrate_dynamics_speed_comparison(plant_factory):
     warmup = 20
     repeats = 1000
 
-    def measure(method: str) -> float:
+    def measure(method: IntegratorType) -> float:
         plant = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-        plant.set_noise_covariances(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
+        plant.set_noise_matrices(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
 
         # warm-up to reduce one-time overhead in the measured loop
         for _ in range(warmup):
             plant.x = plant.x_0.copy()
             plant.integrate_dynamics(t_start=t_start, t_stop=t_stop, dt=dt, method=method,
-                hold_noise_const=True)
+                use_ode_mode=True)
 
         # start timing
         t0 = time.perf_counter()
         for _ in range(repeats):
             plant.x = plant.x_0.copy()
             plant.integrate_dynamics(t_start=t_start, t_stop=t_stop, dt=dt, method=method,
-                hold_noise_const=True)
+                use_ode_mode=True)
         return time.perf_counter() - t0
 
-    numerical_time = measure('RK4')
-    analytic_time = measure('analytic')
+    numerical_time = measure(IntegratorType.RK4)
+    analytic_time = measure(IntegratorType.ANALYTIC_ODE)
 
     # use pytest -s to view this manually
     print(f'Numerical time: {numerical_time:.6f}s, Analytic time: {analytic_time:.6f}s')

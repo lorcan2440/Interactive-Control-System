@@ -15,7 +15,8 @@ from plant import Plant, IntegratorType
 from controllers import ControllerType, ManualController, OpenLoopController, \
     BangBangController, PIDController
 from gui import GUI
-from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAULT_PARAMS, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST, ANIM_SPEED_FACTOR, MAX_FRAMES_PER_TICK
+from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAULT_PARAMS, \
+    GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST, ANIM_SPEED_FACTOR, MAX_FRAMES_PER_TICK
 
 
 class Simulation(QWidget):
@@ -67,6 +68,10 @@ class Simulation(QWidget):
 
         # present time
         self.t = 0.0
+
+        # process-noise mode used by integrators
+        self.use_ode_mode = False
+        self.integrator_method = IntegratorType.EULER_MARUYAMA
 
         # check time steps are acceptable
         self.EPS = 10 ** (-1 * MAX_SIG_FIGS)  # small number for use with float comparisons
@@ -176,7 +181,7 @@ class Simulation(QWidget):
         # solve dynamics
         t_stop = t_start + self.dt_anim
         t_span, x_span = self.plant.integrate_dynamics(t_start, t_stop, self.dt_int, 
-            method=IntegratorType.EULER_MARUYAMA, hold_noise_const=False)  # shapes (num_steps,), (dims, num_steps)
+            method=self.integrator_method, use_ode_mode=self.use_ode_mode)  # shapes (num_steps,), (dims, num_steps)
 
         # calculate true output (without noise)
         y_span = self.plant.calc_y(x_span, u=np.tile(u, (1, x_span.shape[1])))  # shape (1, num_steps)

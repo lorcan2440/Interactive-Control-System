@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, \
     QButtonGroup, QDialog, QDialogButtonBox, QMessageBox, QWidget, QGridLayout, QSpinBox, QTableWidget, \
-    QTableWidgetItem, QStyledItemDelegate, QLineEdit
+    QTableWidgetItem, QStyledItemDelegate, QLineEdit, QComboBox
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QDoubleValidator
 import pyqtgraph as pg
@@ -15,6 +15,7 @@ from pyqtgraph import GraphicsLayoutWidget, mkPen
 
 # local imports
 from controllers import ControllerType
+from plant import IntegratorType
 from utils import make_slider_from_cfg, PLANT_DEFAULT_PARAMS, MAX_SIG_FIGS, ANIM_SPEED_FACTOR, \
     GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
 
@@ -462,6 +463,8 @@ class GUI:
             dlg_layout = QVBoxLayout()
 
             widget = StateSpaceMatrixInput(parent=dialog, initial_dims=self.sim.plant.dims)
+            widget.set_use_ode_mode(getattr(self.sim, 'use_ode_mode', False))
+            widget.set_integrator_method(getattr(self.sim, 'integrator_method', IntegratorType.EULER_MARUYAMA))
 
             # pre-fill with current plant matrices if available
             A, B, C, D = self.sim.plant.A, self.sim.plant.B, self.sim.plant.C, self.sim.plant.D
@@ -524,7 +527,7 @@ class GUI:
         try:
             # apply new matrices to plant
             self.sim.plant.set_state_space_matrices(A_new, B_new, C_new, D_new)
-            self.sim.plant.set_noise_covariances(Q=Q_new, R=R_new)
+            self.sim.plant.set_noise_matrices(Q=Q_new, R=R_new)
 
         except ValueError as e:
             if str(e) == "State-space matrices have incorrect dimensions.":
@@ -540,15 +543,15 @@ class GUI:
                 self.sim.plant.u_0 = getattr(self.sim.plant, 'u_0', np.array([[0.0]]))
                 self.sim.plant.u = self.sim.plant.u_0.copy()
 
-            if str(e) in ("Noise covariance matrices Q and R have incorrect dimensions.", 
-                          "Process noise covariance matrix Q must be symmetric.",
-                          "Noise covariance matrices Q and R must be positive semidefinite."):
-                QMessageBox.warning(dialog, 'Invalid noise covariance matrices', str(e))
+            if str(e) in ("Noise matrices Q and R have incorrect dimensions.", 
+                          "Process noise matrix Q must be symmetric.",
+                          "Noise matrices Q and R must be positive semidefinite."):
+                QMessageBox.warning(dialog, 'Invalid noise matrices', str(e))
                 return
 
             # apply the new state-space matrices
             self.sim.plant.set_state_space_matrices(A_new, B_new, C_new, D_new)
-            self.sim.plant.set_noise_covariances(Q=Q_new, R=R_new)
+            self.sim.plant.set_noise_matrices(Q=Q_new, R=R_new)
 
             # clear data buffers and graph areas
             self.clear_buffers()
@@ -557,6 +560,8 @@ class GUI:
         # for controllers that use plant matrices, recalculate any of their needed params
         self.sim.openloop_controller.calc_ss_gain()
         self.sim.pid_controller.reset_memory()
+        self.sim.use_ode_mode = widget.use_ode_mode
+        self.sim.integrator_method = widget.get_integrator_method()
 
         dialog.accept()
 
@@ -572,6 +577,8 @@ class StateSpaceMatrixInput(QWidget):
         super().__init__(parent)
 
         self.dims = max(1, int(initial_dims))
+        self.use_ode_mode = False
+        self.integrator_method = IntegratorType.EULER_MARUYAMA
 
         self.delegate = FloatDelegate()
 
@@ -585,6 +592,15 @@ class StateSpaceMatrixInput(QWidget):
         header_layout = QGridLayout()
         header_layout.addWidget(lbl, 0, 0)
         header_layout.addWidget(self.spin, 0, 1)
+        self.use_ode_mode_button = QPushButton()
+        self.use_ode_mode_button.setCheckable(True)
+        self.use_ode_mode_button.toggled.connect(self.set_use_ode_mode)
+        header_layout.addWidget(self.use_ode_mode_button, 1, 0, 1, 2)
+        self.integrator_label = QLabel('Integrator')
+        self.integrator_combo = QComboBox()
+        self.integrator_combo.currentIndexChanged.connect(self.on_integrator_changed)
+        header_layout.addWidget(self.integrator_label, 2, 0)
+        header_layout.addWidget(self.integrator_combo, 2, 1)
         top_layout.addLayout(header_layout)
 
         # matrices: use QTableWidget for each
@@ -609,7 +625,8 @@ class StateSpaceMatrixInput(QWidget):
         grid.addWidget(self.table_C, 3, 0)
         grid.addWidget(QLabel('D'), 2, 1)
         grid.addWidget(self.table_D, 3, 1)
-        grid.addWidget(QLabel('Q'), 0, 2)
+        self.label_Q = QLabel('Q')
+        grid.addWidget(self.label_Q, 0, 2)
         grid.addWidget(self.table_Q, 1, 2)
         grid.addWidget(QLabel('R'), 2, 2)
         grid.addWidget(self.table_R, 3, 2)
@@ -619,6 +636,88 @@ class StateSpaceMatrixInput(QWidget):
 
         self.col_width = 80
         self.resize_all(self.dims)
+        self.set_use_ode_mode(False)
+
+    def set_use_ode_mode(self, use_ode_mode: bool):
+        prev_method = self.integrator_method
+        self.use_ode_mode = bool(use_ode_mode)
+
+        if self.use_ode_mode:
+            self.label_Q.setText('Q (covariance matrix)')
+            self.use_ode_mode_button.setText('use_ode_mode: On')
+        else:
+            self.label_Q.setText('Q (diffusion matrix)')
+            self.use_ode_mode_button.setText('use_ode_mode: Off')
+
+        if self.use_ode_mode_button.isChecked() != self.use_ode_mode:
+            self.use_ode_mode_button.blockSignals(True)
+            try:
+                self.use_ode_mode_button.setChecked(self.use_ode_mode)
+            finally:
+                self.use_ode_mode_button.blockSignals(False)
+
+        self.populate_integrator_options(preferred_method=prev_method)
+
+    def get_integrator_choices(self) -> list[tuple[str, IntegratorType]]:
+        if self.use_ode_mode:
+            return [
+                ('RK4', IntegratorType.RK4),
+                ('Analytic ODE', IntegratorType.ANALYTIC_ODE),
+            ]
+
+        return [
+            ('Euler-Maruyama', IntegratorType.EULER_MARUYAMA),
+            ('Analytic SDE', IntegratorType.ANALYTIC_SDE),
+        ]
+
+    def normalize_integrator_method(self, method: IntegratorType | None) -> IntegratorType:
+        available = [m for _, m in self.get_integrator_choices()]
+        if method in available:
+            return method
+
+        if self.use_ode_mode:
+            if method == IntegratorType.ANALYTIC_SDE:
+                return IntegratorType.ANALYTIC_ODE
+            return IntegratorType.RK4
+
+        if method == IntegratorType.ANALYTIC_ODE:
+            return IntegratorType.ANALYTIC_SDE
+        return IntegratorType.EULER_MARUYAMA
+
+    def populate_integrator_options(self, preferred_method: IntegratorType | None = None):
+        choices = self.get_integrator_choices()
+        selected = self.normalize_integrator_method(preferred_method)
+
+        self.integrator_combo.blockSignals(True)
+        try:
+            self.integrator_combo.clear()
+            for text, method in choices:
+                self.integrator_combo.addItem(text, method)
+
+            index = 0
+            for i in range(self.integrator_combo.count()):
+                if self.integrator_combo.itemData(i) == selected:
+                    index = i
+                    break
+            self.integrator_combo.setCurrentIndex(index)
+        finally:
+            self.integrator_combo.blockSignals(False)
+
+        self.integrator_method = self.integrator_combo.currentData()
+
+    def set_integrator_method(self, method: IntegratorType):
+        self.populate_integrator_options(preferred_method=method)
+
+    def get_integrator_method(self) -> IntegratorType:
+        method = self.integrator_combo.currentData()
+        if method is None:
+            raise ValueError('No integrator selected.')
+        return method
+
+    def on_integrator_changed(self, _index: int):
+        method = self.integrator_combo.currentData()
+        if method is not None:
+            self.integrator_method = method
 
     def on_dims_changed(self, val: int):
         val = max(1, int(val))

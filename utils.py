@@ -76,7 +76,7 @@ PLANT_DEFAULT_PARAMS = {
      
 	'D': np.array([[0.0]]),             # feedthrough matrix D (from u to y)
      
-	'Q': np.array([[w_proc_var_init, 0.0],      # process noise covariance matrix Q (from w_proc to x_dot)
+	'Q': np.array([[w_proc_var_init, 0.0],      # process noise matrix Q (diffusion matrix in SDE mode)
                    [0.0, w_proc_var_init]]),
 
 	'R': np.array([[w_meas_var_init]]),         # measurement noise covariance matrix R (from w_meas to y)

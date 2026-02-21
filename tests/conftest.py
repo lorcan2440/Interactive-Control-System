@@ -35,7 +35,7 @@ def plant():
     - k_12, k_21: flow rates between compartments (defaults: k_12 = 10.0, k_21 = 20.0)
     - d: drug degradation rate (default: d = 1.0)
 
-    and the noise covariances are:
+    and the noise matrices are:
 
     - Q = [[0.0, 0.0], [0.0, 1.0]]  (std.dev 1.0 in compartment 2, no noise in compartment 1)
     - R = [[1.0^2]]  (std.dev 1.0)

@@ -1,24 +1,11 @@
-# built-ins
-from enum import Enum, auto
-
 # external imports
 import numpy as np
 from scipy.linalg import expm
 
 # local imports
 from utils import get_logger, get_t_span, TIME_STEPS
-from integrators import integrate_rk4, integrate_euler_maruyama, integrate_analytic
-
-
-class IntegratorType(Enum):
-
-    RK4 = auto()
-    EULER_MARUYAMA = auto()
-    ANALYTIC = auto()
-
-    def __str__(self):
-        """Return the string representation for display purposes"""
-        return self.name
+from integrators import IntegratorType, integrate_rk4, integrate_euler_maruyama, \
+    integrate_analytic_ode, integrate_analytic_sde
 
 
 class Plant:
@@ -32,8 +19,31 @@ class Plant:
         '''
         Initialise a linear plant, representing a dynamical system. The state of the plant
         is a vector of dimension `dims`. The plant accepts a scalar control input and produces
-        a scalar measurement output. The plant is affected by process noise and measurement noise, 
-        modelled by the continuous-time equations:
+        a scalar measurement output. The plant is affected by process noise and measurement noise.
+        
+        When in SDE (stochastic differential equation) mode (the default setting in the Simulator),
+        the equations describing the plant are:
+
+        - dx = (A x + B u) dt + G dW_t
+        - y = C x + D u
+        - y_meas = y + w_meas
+
+        where:
+
+        - `u`: the control input to the plant. Shape: (1, 1) (scalar)
+        - `y_meas`: the measurement output from the plant. Shape: (1, 1) (scalar)
+        - `x`: the state of the plant. Shape (`dims`, 1) (column vector)
+        - `dW_t`: Wiener increments. Shape: (`dims`, 1) (column vector)
+        - `w_meas`: measurement noise, drawn from a Gaussian distribution. Shape: (1, 1) (scalar)
+
+        The state-space matrices A, B, C, D are set using the `set_state_space_matrices` method.
+        The noise matrices Q, R are set using the `set_noise_matrices` method. Here, Q is
+        the diffusion matrix for the stochastic process, such that G @ G.T = Q, and R is the 
+        1x1 covariance matrix (i.e. variance) for the measurement noise samples w_meas, i.e.
+        w_meas ~ N(0, R).
+
+        When in ODE (ordinary differential equation) mode (`use_ode_mode = True`), 
+        the equations describing the plant are:
 
         - dx/dt = A x + B u + w_proc
         - y = C x + D u
@@ -44,9 +54,14 @@ class Plant:
         - `u`: the control input to the plant. Shape: (1, 1) (scalar)
         - `y_meas`: the measurement output from the plant. Shape: (1, 1) (scalar)
         - `x`: the state of the plant. Shape (`dims`, 1) (column vector)
+        - `w_proc`: process noise, drawn from a Gaussian distribution. Shape: (`dims`, 1) (column vector)
+        - `w_meas`: measurement noise, drawn from a Gaussian distribution. Shape: (1, 1) (scalar)
 
-        The state-space matrices A, B, C, D are set using the `set_state_space_matrices` method.
-        The noise covariance matrices Q, R are set using the `set_noise_covariances` method.
+        Here, both Q and R are noise covariance matrices for their noise terms i.e.
+        w_proc ~ N(0, Q) and w_meas ~ N(0, R).
+
+        NOTE: the SDE and ODE plant models are not mathematically equivalent, since the meaning
+        of Q differs between them.
 
         ### Arguments
         #### Required
@@ -58,7 +73,8 @@ class Plant:
         - `B` (np.ndarray, default = None): control input matrix. Shape: (`dims`, 1) (column vector)
         - `C` (np.ndarray, default = None): measurement matrix. Shape: (1, `dims`) (row vector)
         - `D` (np.ndarray, default = None): feedthrough matrix. Shape: (1, 1) (scalar)
-        - `Q` (np.ndarray, default = None): process noise covariance matrix. Shape: (`dims`, `dims`) (positive semi-definite matrix)
+        - `Q` (np.ndarray, default = None): process noise diffusion matrix 
+        (or if in ODE mode, it is the covariance matrix). Shape: (`dims`, `dims`) (positive semi-definite matrix)
         - `R` (np.ndarray, default = None): measurement noise covariance matrix. Shape: (1, 1) (non-negative scalar)
         '''
 
@@ -82,9 +98,9 @@ class Plant:
         self.dt_int = TIME_STEPS['DT_INT']
         self.dt_anim = TIME_STEPS['DT_ANIM']
 
-        # set state-space matrices and noise covariances if provided
+        # set state-space matrices and noise matrices if provided
         self.set_state_space_matrices(A, B, C, D)
-        self.set_noise_covariances(Q, R)
+        self.set_noise_matrices(Q, R)
 
     def set_state_space_matrices(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray):
         '''
@@ -129,12 +145,13 @@ class Plant:
         self.C = C
         self.D = D
 
-    def set_noise_covariances(self, Q: np.ndarray = None, R: np.ndarray = None):
+    def set_noise_matrices(self, Q: np.ndarray = None, R: np.ndarray = None):
         '''
-        The disturbances to the plant are modelled as zero-mean Gaussian noise with 
-        covariance matrices Q and R. This function sets the attributes `self.Q` and `self.R`.
+        Set the process/measurement noise matrices `self.Q` and `self.R`.
 
-        - `Q`: process noise covariance matrix. Shape: (dims, dims) (positive semi-definite matrix)
+        - `Q`: process noise matrix. In SDE mode (`use_ode_mode = False`) this is the diffusion
+        matrix; in ODE mode (`use_ode_mode = True`) this is the covariance matrix of `w_proc`.
+        Shape: (dims, dims) (positive semi-definite matrix)
         - `R`: measurement noise covariance matrix. Shape: (1, 1) (non-negative scalar)
         '''
         if Q is None:
@@ -143,11 +160,11 @@ class Plant:
             R = np.array([[0.0]])
 
         if Q.shape != (self.dims, self.dims) or R.shape != (1, 1):
-            raise ValueError('Noise covariance matrices Q and R have incorrect dimensions.')
+            raise ValueError('Noise matrices Q and R have incorrect dimensions.')
         elif not np.allclose(Q, Q.T):
-            raise ValueError('Process noise covariance matrix Q must be symmetric.')
+            raise ValueError('Process noise matrix Q must be symmetric.')
         elif not np.all(np.linalg.eigvals(Q) >= 0) or R[0, 0] < 0:
-            raise ValueError('Noise covariance matrices Q and R must be positive semidefinite.')
+            raise ValueError('Noise matrices Q and R must be positive semidefinite.')
         else:
             self.Q = Q
             self.R = R
@@ -170,7 +187,7 @@ class Plant:
         return w_proc
 
     def integrate_dynamics(self, t_start: float, t_stop: float, dt: float, 
-            method: IntegratorType = IntegratorType.RK4, hold_noise_const: bool = False) \
+            method: IntegratorType | None = None, use_ode_mode: bool = False) \
                 -> tuple[np.ndarray, np.ndarray]:
         '''
         Integrates the equations describing the plant system from `t_start` to `t_stop` inclusive, using
@@ -179,13 +196,9 @@ class Plant:
         At the end, the state at `t_stop` is stored in `self.x`.
         The measured output is not computed here.
 
-        There are three methods for integration: `IntegratorType.RK4`, 
-        `IntegratorType.EULER_MARUYAMA`, and `IntegratorType.ANALYTIC`:
-
-        - `IntegratorType.RK4`: use the Runge-Kutta 4th order method with fixed step size `dt`.
-        - `IntegratorType.EULER_MARUYAMA`: use the Euler-Maruyama method with fixed step size `dt`. 
-        - `IntegratorType.ANALYTIC`: use the exact solution of the linear system, calculated with a cached matrix exponential. 
-        Van Loan's variance formula is used to calculate the exact discretised integrated process noise.
+        Integration methods:
+        - ODE mode (`use_ode_mode = True`): `IntegratorType.RK4`, `IntegratorType.ANALYTIC_ODE`
+        - SDE mode (`use_ode_mode = False`): `IntegratorType.EULER_MARUYAMA`, `IntegratorType.ANALYTIC_SDE`
        
         ### Arguments
         #### Required
@@ -193,26 +206,44 @@ class Plant:
         - `t_stop` (float): stop time of integration
         - `dt` (float): step size for numerical integration
         #### Optional
-        - `method` (IntegratorType, default = IntegratorType.RK4): integration method.
-        - `hold_noise_const` (bool, default = False): if True, sample once and use it across all time steps. 
-        If False, sample new noise at each `dt`.
+        - `method` (IntegratorType | None, default = None): integration method.
+        If None, a mode-appropriate default is used (`RK4` for ODE mode, `EULER_MARUYAMA` for SDE mode).
+        - `use_ode_mode` (bool, default = False): if True, run the ODE model where process noise
+        is sampled once per integration interval and treated as a constant drift term. If False,
+        run the SDE model where process noise is treated as a stochastic diffusion term.
         
         ### Returns
         - `tuple[np.ndarray, np.ndarray]`: arrays of time points and state trajectory (including both endpoints).
         '''
 
-        match method:
-            case IntegratorType.RK4:
-                t_span, x_span = integrate_rk4(self, t_start, t_stop, dt, hold_noise_const)
-            case IntegratorType.EULER_MARUYAMA:
-                t_span, x_span = integrate_euler_maruyama(self, t_start, t_stop, dt, hold_noise_const)
-            case IntegratorType.ANALYTIC:
-                t_span, x_span = integrate_analytic(self, t_start, t_stop, dt, hold_noise_const)
-            case _:
-                raise ValueError(
-                    f'Invalid integration method: {method}. '
-                    'Expected one of: IntegratorType.RK4, IntegratorType.EULER_MARUYAMA, IntegratorType.ANALYTIC.'
-                )
+        # set the default integration method to the numerical method if not provided
+        if method is None:
+            method = IntegratorType.RK4 if use_ode_mode else IntegratorType.EULER_MARUYAMA 
+
+        if use_ode_mode:
+            # we are modelling the plant using an ODE, so noise is treated as a constant 
+            # disturbance across the integration interval
+            match method:
+                case IntegratorType.RK4:
+                    t_span, x_span = integrate_rk4(self, t_start, t_stop, dt)
+                case IntegratorType.ANALYTIC_ODE:
+                    t_span, x_span = integrate_analytic_ode(self, t_start, t_stop, dt)
+                case _:
+                    raise ValueError(
+                        f'Invalid integration method for use_ode_mode = True: {method}. '
+                        'Expected one of: IntegratorType.RK4, IntegratorType.ANALYTIC_ODE.')
+        else:
+            # we are modelling the plant using an SDE, so noise is treated as a stochastic 
+            # diffusion term across the integration interval
+            match method:
+                case IntegratorType.EULER_MARUYAMA:
+                    t_span, x_span = integrate_euler_maruyama(self, t_start, t_stop, dt)
+                case IntegratorType.ANALYTIC_SDE:
+                    t_span, x_span = integrate_analytic_sde(self, t_start, t_stop, dt)
+                case _:
+                    raise ValueError(
+                        f'Invalid integration method for use_ode_mode = False: {method}. '
+                        'Expected one of: IntegratorType.EULER_MARUYAMA, IntegratorType.ANALYTIC_SDE.')
 
         # store final state in plant attributes
         # this becomes the initial state for the next time span when `integrate_dynamics` is called again

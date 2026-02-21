@@ -1,13 +1,36 @@
 # external imports
+from enum import Enum, auto
+
 import numpy as np
 from scipy.linalg import expm
 
 # local imports
+import plant
 from utils import get_t_span, EPS
 
 
-def integrate_rk4(plant, t_start: float, t_stop: float, dt: float,
-                  hold_noise_const: bool = False) -> tuple[np.ndarray, np.ndarray]:
+class IntegratorType(Enum):
+
+    # for ODEs only (use_ode_mode = True):
+    RK4 = auto()
+    ANALYTIC_ODE = auto()
+
+    # for SDEs only (use_ode_mode = False):
+    EULER_MARUYAMA = auto()
+    ANALYTIC_SDE = auto()
+
+    def __str__(self):
+        """Return the string representation for display purposes"""
+        return self.name
+
+
+# TODO: consider adding RK4 for Stratonovich SDEs, based on Frankignoul and Hasselmann (1976)
+# source: https://github.com/bekaiser/SDE
+
+
+# integrators for ODEs (use_ode_mode = True)
+
+def integrate_rk4(plant, t_start: float, t_stop: float, dt: float) -> tuple[np.ndarray, np.ndarray]:
     """
     Integrate plant dynamics using the fixed-step Runge-Kutta 4th order method (RK4)
     over [t_start, t_stop].
@@ -32,10 +55,7 @@ def integrate_rk4(plant, t_start: float, t_stop: float, dt: float,
 
     Bu = plant.B @ plant.u  # shape (dims, 1)
 
-    if hold_noise_const:
-        w_proc_const = plant.sample_process_noise(n=1)  # shape (dims, 1)
-    else:
-        w_proc = plant.sample_process_noise(n=num_steps - 1)  # shape (dims, num_steps - 1)
+    w_proc_i = plant.sample_process_noise(n=1)  # shape (dims, 1)
 
     for i in range(num_steps - 1):
 
@@ -43,11 +63,6 @@ def integrate_rk4(plant, t_start: float, t_stop: float, dt: float,
         t_i = t_span[i]
         dt_i = t_span[i + 1] - t_i
         x_i = x_span[:, i].reshape(plant.dims, 1)  # shape (dims, 1)
-
-        if hold_noise_const:
-            w_proc_i = w_proc_const
-        else:
-            w_proc_i = w_proc[:, i].reshape(plant.dims, 1)
 
         # use Runge-Kutta 4th order method (RK4) with fixed step size dt
         # NOTE: dt may be different for the last step, so we use t_span[i + 1] - t_i instead of dt here
@@ -61,9 +76,9 @@ def integrate_rk4(plant, t_start: float, t_stop: float, dt: float,
 
     return t_span, x_span
 
+# integrators for SDEs (use_ode_mode = False)
 
-def integrate_euler_maruyama(plant, t_start: float, t_stop: float, dt: float,
-                             hold_noise_const: bool = False) -> tuple[np.ndarray, np.ndarray]:
+def integrate_euler_maruyama(plant, t_start: float, t_stop: float, dt: float) -> tuple[np.ndarray, np.ndarray]:
     """
     Integrate plant dynamics with the Euler-Maruyama method over [t_start, t_stop].
 
@@ -88,10 +103,7 @@ def integrate_euler_maruyama(plant, t_start: float, t_stop: float, dt: float,
 
     Bu = plant.B @ plant.u  # shape (dims, 1)
 
-    if hold_noise_const:
-        w_proc_const = plant.sample_process_noise(n=1)  # shape (dims, 1)
-    else:
-        w_proc = plant.sample_process_noise(n=num_steps - 1)  # shape (dims, num_steps - 1)
+    w_proc = plant.sample_process_noise(n=num_steps - 1)  # shape (dims, num_steps - 1)
 
     for i in range(num_steps - 1):
 
@@ -100,87 +112,110 @@ def integrate_euler_maruyama(plant, t_start: float, t_stop: float, dt: float,
         dt_i = t_span[i + 1] - t_i
         x_i = x_span[:, i].reshape(plant.dims, 1)  # shape (dims, 1)
 
-        if hold_noise_const:
-            x_span[:, i + 1] = x_span[:, i] + (plant.A @ x_i + Bu + w_proc_const)[:, 0] * dt_i
-        else:
-            w_proc_i = w_proc[:, i].reshape(plant.dims, 1)
-            sqrt_dt = np.sqrt(dt_i)
-            # Euler-Maruyama update:
-            # x_{i+1} = x_i + (A x_i + B u) dt + w_i sqrt(dt), where w_i ~ N(0, Q)
-            x_span[:, i + 1] = x_span[:, i] + (plant.A @ x_i + Bu)[:, 0] * dt_i + w_proc_i[:, 0] * sqrt_dt
+        w_proc_i = w_proc[:, i].reshape(plant.dims, 1)
+        sqrt_dt = np.sqrt(dt_i)
+        # Euler-Maruyama update:
+        # x_{i+1} = x_i + (A x_i + B u) dt + w_i sqrt(dt), where w_i ~ N(0, Q)
+        x_span[:, i + 1] = x_span[:, i] + (plant.A @ x_i + Bu)[:, 0] * dt_i + w_proc_i[:, 0] * sqrt_dt
 
     return t_span, x_span
 
 
-def integrate_analytic(plant, t_start: float, t_stop: float, dt: float,
-                       hold_noise_const: bool = False) -> tuple[np.ndarray, np.ndarray]:
+def integrate_analytic_ode(plant, t_start: float, t_stop: float, dt: float) \
+        -> tuple[np.ndarray, np.ndarray]:
     """
-    Integrate plant dynamics with an analytic linear-system solution.
+    Integrate plant dynamics with an analytic linear-system solution, treating noise as a 
+    constant drift term across the integration interval (`use_ode_mode = True`).
 
+    Solves the ODE: dx/dt = A x + B u + w_proc, where w_proc is a constant process noise term
+    sampled at the start of the integration interval. This is not mathematically equivalent to
+    solving the true SDE, since the noise is not treated as a stochastic diffusion term.
+    
+    This method uses the matrix exponential to compute the exact solution to the ODE, which is
+    x(t) = e^{A t} @ x_0 + A^{-1} @ (e^{A t} - I) @ (B u + w_proc), where x_0 is the initial 
+    state at the start of the integration interval.
+
+    ### Arguments
+    - `plant`: the plant to integrate
+    - `t_start`: start time of the integration interval. Shape: scalar
+    - `t_stop`: stop time of the integration interval. Shape: scalar
+    - `dt`: time step for the output time points. Shape: scalar
+
+    ### Returns
+    - `tuple[np.ndarray, np.ndarray]`: arrays of time points and state trajectory over the integration interval (including both endpoints).
+    """
+    t_span = plant.t_span_0 + t_start
+    I = np.eye(plant.dims)
+
+    # compute Phi
+    Phi = plant.exp_A_t_span  # shape (num_steps, dims, dims)
+    # compute B u + w_proc  (where w_proc is constant)
+    Bu_plus_w = plant.B @ plant.u + plant.sample_process_noise(n=1)  # shape (dims, 1)
+    # compute A^{-1} @ (e^{A t} - I) @ (B u + w_proc)
+    Phi_plus = np.linalg.solve(plant.A, (Phi - I))  # shape (num_steps, dims, dims)
+    # compute x using exact solution:
+    # x = e^{A t} @ x_0 + A^{-1} @ (e^{A t} - I) @ (B u + w_proc)
+    x_span = (Phi @ plant.x + Phi_plus @ Bu_plus_w)[:, :, 0].T  # shape (dims, num_steps)
+    return t_span, x_span
+
+def integrate_analytic_sde(plant, t_start: float, t_stop: float, dt: float) \
+        -> tuple[np.ndarray, np.ndarray]:
+    
+    """
+    Integrate plant dynamics with an analytic linear-system solution, treating noise as a
+    stochastic diffusion term across the integration interval (`use_ode_mode = False`).
     Solves the Itô SDE: dx = (A x + B u) dt + G dW_t, where W_t is a Wiener process
-    (E[dW_t @ dW_t.T] = I dt), so that the covariance matrix of the diffusion term (process noise)
-    is Q = G @ G.T.
+    (E[dW_t @ dW_t.T] = I dt), so that the covariance matrix of the diffusion term (process 
+    noise) is Q = G @ G.T.
 
-    This method uses the Van Loan method to compute the exact discrete-time process noise 
-    covariance matrix Q_d over the integration interval, and samples noise from N(0, Q_d) to 
+    This method uses the Van Loan method to compute the exact discrete-time process noise
+    covariance matrix Q_d over the integration interval, and samples noise from N(0, Q_d) to
     get an exact sample solution to the SDE.
 
-    NOTE: If `hold_noise_const` is True, then the process noise is treated as a deterministic constant
-    across the integration interval, rather than a stochastic diffusion term. This changes the 
-    model from an SDE to an ODE with additive drift, and is not mathematically equivalent to the 
-    true SDE solution (although it remains an exact solution to the ODE). Solving the ODE
-    will lead to a process covariance that scales with `dt_int^2`, rather than `dt_int` as 
-    in the SDE solution, so results are not comparable between the two cases.
+    ### Arguments
+    - `plant`: the plant to integrate
+    - `t_start`: start time of the integration interval. Shape: scalar
+    - `t_stop`: stop time of the integration interval. Shape: scalar
+    - `dt`: time step for the output time points. Shape: scalar
+
+    ### Returns
+    - `tuple[np.ndarray, np.ndarray]`: arrays of time points and state trajectory over 
+    the integration interval (including both endpoints).
     """
 
     t_span = plant.t_span_0 + t_start
     num_steps = t_span.shape[0]
     I = np.eye(plant.dims)
 
-    if hold_noise_const:
+    # compute Van Loan block matrix
+    # source: https://personales.upv.es/asala/DocenciaOnline/material/DiscretizRuidoVanLoanEN.pdf
+    M = np.block([[plant.A,                  plant.Q   ],
+                  [np.zeros_like(plant.A),   -plant.A.T]])  # shape (2 * dims, 2 * dims)
+    M_exp = expm(M * plant.dt_int)  # shape (2 * dims, 2 * dims)
+    Phi = M_exp[:plant.dims, :plant.dims]  # shape (dims, dims)
+    S = M_exp[:plant.dims, plant.dims:]  # shape (dims, dims)
+    Q_d = S @ Phi.T  # shape (dims, dims)
 
-        # compute Phi
-        Phi = plant.exp_A_t_span  # shape (num_steps, dims, dims)
-        # compute B u + w_proc  (where w_proc is constant)
-        Bu_plus_w = plant.B @ plant.u + plant.sample_process_noise(n=1)  # shape (dims, 1)
-        # compute A^{-1} @ (e^{A t} - I) @ (B u + w_proc)
-        Phi_plus = np.linalg.solve(plant.A, (Phi - I))  # shape (num_steps, dims, dims)
-        # compute x using exact solution:
-        # x = e^{A t} @ x_0 + A^{-1} @ (e^{A t} - I) @ (B u + w_proc)
-        x_span = (Phi @ plant.x + Phi_plus @ Bu_plus_w)[:, :, 0].T  # shape (dims, num_steps)
+    # check Q_d is close to being symmetric (it should already be)
+    if not np.allclose(Q_d, Q_d.T, atol=EPS):
+        plant.logger.warning(f'''Integrated process noise covariance matrix Q_d is 
+            not symmetric. Q_d: {Q_d}. Taking the symmetric component and continuing.''')
 
-    else:
+    # take the symmetric component (ideally no change to within numerical precision)
+    Q_d = 0.5 * (Q_d + Q_d.T)
 
-        # compute Van Loan block matrix
-        # source: https://personales.upv.es/asala/DocenciaOnline/material/DiscretizRuidoVanLoanEN.pdf
-        M = np.block([[plant.A,                  plant.Q   ],
-                      [np.zeros_like(plant.A),   -plant.A.T]])  # shape (2 * dims, 2 * dims)
-        M_exp = expm(M * plant.dt_int)  # shape (2 * dims, 2 * dims)
+    Gamma = np.linalg.solve(plant.A, (Phi - I) @ plant.B)
+    Gamma_u = (Gamma @ plant.u).flatten()
 
-        Phi = M_exp[:plant.dims, :plant.dims]  # shape (dims, dims)
-        S = M_exp[:plant.dims, plant.dims:]  # shape (dims, dims)
-        Q_d = S @ Phi.T  # shape (dims, dims)
+    # sample integrated process noise
+    w_proc_int = np.random.multivariate_normal(mean=np.zeros(plant.dims), cov=Q_d,
+        size=num_steps - 1, check_valid='raise').T
 
-        # check Q_d is close to being symmetric (it should already be)
-        if not np.allclose(Q_d, Q_d.T, atol=EPS):
-            plant.logger.warning(f'''Integrated process noise covariance matrix Q_d is 
-                not symmetric. Q_d: {Q_d}. Taking the symmetric component and continuing.''')
-
-        # take the symmetric component (ideally no change to within numerical precision)
-        Q_d = 0.5 * (Q_d + Q_d.T)
-
-        Gamma = np.linalg.solve(plant.A, (Phi - np.eye(plant.dims)) @ plant.B)
-        Gamma_u = (Gamma @ plant.u).flatten()
-
-        # sample integrated process noise
-        w_proc_int = np.random.multivariate_normal(mean=np.zeros(plant.dims), cov=Q_d,
-            size=num_steps - 1, check_valid='raise').T
-
-        # use state update equation: x_{i+1} = Phi @ x_i + Gamma @ u + w_proc_int
-        # where w_proc_int ~ N(0, Q_d)
-        x_span = np.zeros((plant.dims, num_steps))
-        x_span[:, 0] = plant.x[:, 0]
-        for i in range(num_steps - 1):
-            x_span[:, i + 1] = Phi @ x_span[:, i] + Gamma_u + w_proc_int[:, i]
+    # use state update equation: x_{i+1} = Phi @ x_i + Gamma @ u + w_proc_int
+    # where w_proc_int ~ N(0, Q_d)
+    x_span = np.zeros((plant.dims, num_steps))
+    x_span[:, 0] = plant.x[:, 0]
+    for i in range(num_steps - 1):
+        x_span[:, i + 1] = Phi @ x_span[:, i] + Gamma_u + w_proc_int[:, i]
 
     return t_span, x_span
