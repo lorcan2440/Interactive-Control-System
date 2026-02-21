@@ -1,31 +1,55 @@
 import numpy as np
 from scipy.linalg import expm
 
-x_0 = np.array([[1.0], [1.0]])
-t_span = np.arange(0, 0.1 + 0.01, 0.01)  # shape (11,)
-A = np.array([[-1, 2], 
-              [-3, -4]])
+M = np.array([[[0.00000000e+00, 0.00000000e+00],
+               [0.00000000e+00, 0.00000000e+00]],
 
-Bu = np.array([[1.0], 
-               [0.0]])
+            [[9.89078972e-04, 2.45610132e-05],
+            [4.87467433e-06, 9.79486674e-04]],
 
-# we want to find the (2, 11) array exp_A_t_times_x_0, where the i-th column is expm(A * t_span[i]) @ x_0
-# create the (11, 2, 2) array of A * t_span
-A_t_span = np.outer(t_span, A.flatten()).reshape(t_span.shape[0], A.shape[0], A.shape[1])  # shape (11, 2, 2)
-exp_A_t_span = expm(A_t_span)  # shape (11, 2, 2)
-print(exp_A_t_span)
-exp_A_t_times_x_0 = exp_A_t_span @ x_0  # shape (11, 2, 1)
-#print(exp_A_t_times_x_0[:, :, 0].T)  # shape (11, 2)
+            [[1.95661845e-03, 9.65481054e-05],
+            [1.90078502e-05, 1.91983625e-03]],
 
-print('----')
+            [[2.90304308e-03, 2.13547652e-04],
+            [4.16858876e-05, 2.82375933e-03]],
 
-# compute the (11, 2, 2) array of exp(A t) - I where I is the (dims x dims) identity matrix
-exp_minus_I = exp_A_t_span - np.eye(A.shape[0])  # shape (11, 2, 2)
-print(exp_minus_I)
+            [[3.82873990e-03, 3.73311739e-04],
+            [7.22237881e-05, 3.69380974e-03]],
 
-print('-----')
+            [[4.73405988e-03, 5.73748664e-04],
+            [1.09963364e-04, 4.53239435e-03]],
 
-# compute A^-1 @ (exp(A t) - I) @ Bu for each t in t_span, resulting in a (11, 2, 1) array
-A_inv = np.linalg.inv(A)  # shape (2, 2)
-A_inv_exp_minus_I_Bu = A_inv @ exp_minus_I @ Bu  # shape (11, 2, 1)
-print(A_inv_exp_minus_I_Bu)
+            [[5.61931940e-03, 8.12914019e-04],
+            [1.54271505e-04, 5.34178222e-03]],
+
+            [[6.48480158e-03, 1.08900234e-03],
+            [2.04538535e-04, 6.12411328e-03]],
+
+            [[7.33075757e-03, 1.40033926e-03],
+            [2.60176657e-04, 6.88140645e-03]],
+
+            [[8.15740768e-03, 1.74537419e-03],
+            [3.20618474e-04, 7.61556729e-03]],
+
+            [[8.96494248e-03, 2.12267341e-03],
+            [3.85315586e-04, 8.32839522e-03]],
+
+            [[9.75352381e-03, 2.53091363e-03],
+            [4.53737266e-04, 9.02159024e-03]],
+
+            [[1.05232857e-02, 2.96887596e-03],
+            [5.25369187e-04, 9.69675938e-03]],
+
+            [[1.12743353e-02, 3.43544026e-03],
+            [5.99712222e-04, 1.03554226e-02]],
+
+            [[1.20067534e-02, 3.92957984e-03],
+            [6.76281303e-04, 1.09990186e-02]],
+
+            [[1.27205957e-02, 4.45035652e-03],
+            [7.54604325e-04, 1.16289099e-02]],
+
+            [[1.34158927e-02, 4.99691599e-03],
+            [8.34221110e-04, 1.22463881e-02]]])
+
+# check that every matrix in M is 

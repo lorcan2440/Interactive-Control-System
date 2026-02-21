@@ -52,6 +52,7 @@ ANIM_SPEED_FACTOR = 1.0
 
 # for testing equality of floats
 MAX_SIG_FIGS = 10
+EPS = 10 ** (-1 * MAX_SIG_FIGS)
 
 # controller parameters available in the GUI
 CONTROLLER_PARAMS_LIST = ['manual_u', 'K_p', 'K_i', 'K_d', 'tau', 'U_plus', 'U_minus']
@@ -202,8 +203,6 @@ def get_t_span(t_start: float, t_stop: float, dt: float) -> np.ndarray:
 
     if dt <= 0:
         raise ValueError(f"Time step dt must be > 0 (got {dt})")
-    
-    EPS = 10 ** (-1 * MAX_SIG_FIGS)
 
     t_span = np.arange(t_start, t_stop + dt, dt)
     if t_span[-1] - t_stop > 0:

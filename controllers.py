@@ -9,6 +9,7 @@ from utils import get_logger
 
 
 class ControllerType(Enum):
+
     NONE = auto()
     MANUAL = auto()
     OPENLOOP = auto()

@@ -150,6 +150,25 @@ def test_dynamics(plant_factory):
     assert np.allclose(x_span[:, -1], np.array([2.1, 1.0]), atol=0.5)  # check final state (near [2.1, 1.0]), bigger tolerance
 
 
+def test_dynamics_analytic_hold_noise_const_false(plant_factory):
+
+    # with zero process noise, both analytic branches should give the same trajectory
+    dt = 0.001
+    t_stop = 1 / 60
+
+    plant_false = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
+    plant_false.set_noise_covariances(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
+    _, x_false = plant_false.integrate_dynamics(
+        t_start=0.0, t_stop=t_stop, dt=dt, method='analytic', hold_noise_const=False)
+
+    plant_true = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
+    plant_true.set_noise_covariances(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
+    _, x_true = plant_true.integrate_dynamics(
+        t_start=0.0, t_stop=t_stop, dt=dt, method='analytic', hold_noise_const=True)
+
+    assert np.allclose(x_false, x_true)
+
+
 def test_integrate_dynamics_speed_comparison(plant_factory):
 
     # keep horizon at one animation frame for simplicity
@@ -177,7 +196,7 @@ def test_integrate_dynamics_speed_comparison(plant_factory):
                 hold_noise_const=True)
         return time.perf_counter() - t0
 
-    numerical_time = measure('numerical')
+    numerical_time = measure('RK4')
     analytic_time = measure('analytic')
 
     # use pytest -s to view this manually

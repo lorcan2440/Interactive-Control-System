@@ -1,9 +1,24 @@
+# built-ins
+from enum import Enum, auto
+
 # external imports
 import numpy as np
 from scipy.linalg import expm
 
 # local imports
 from utils import get_logger, get_t_span, TIME_STEPS
+from integrators import integrate_rk4, integrate_euler_maruyama, integrate_analytic
+
+
+class IntegratorType(Enum):
+
+    RK4 = auto()
+    EULER_MARUYAMA = auto()
+    ANALYTIC = auto()
+
+    def __str__(self):
+        """Return the string representation for display purposes"""
+        return self.name
 
 
 class Plant:
@@ -146,16 +161,17 @@ class Plant:
         - `n` (int, default = 1): number of noise samples to generate.
         
         ### Returns
-        - `np.ndarray`: process noise samples. Shape (`dims`, `n`) (array of column vectors)
+        - `np.ndarray`: process noise samples. Shape (dims, `n`) (array of column vectors)
         '''        
 
-        w_proc = np.random.multivariate_normal(
-            mean=np.zeros(self.dims), cov=self.Q, size=n, check_valid='raise').T  # shape (dims, n)
+        w_proc = np.random.multivariate_normal(mean=np.zeros(self.dims), cov=self.Q, size=n, 
+            check_valid='raise').T  # shape (dims, n)
         
         return w_proc
 
     def integrate_dynamics(self, t_start: float, t_stop: float, dt: float, 
-            method='numerical', hold_noise_const: bool = False) -> tuple[np.ndarray, np.ndarray]:
+            method: IntegratorType = IntegratorType.RK4, hold_noise_const: bool = False) \
+                -> tuple[np.ndarray, np.ndarray]:
         '''
         Integrates the equations describing the plant system from `t_start` to `t_stop` inclusive, using
         a step size of `dt`. The initial state is `self.x` at time `t_start`.
@@ -163,10 +179,13 @@ class Plant:
         At the end, the state at `t_stop` is stored in `self.x`.
         The measured output is not computed here.
 
-        There are two methods for integration: 'numerical' and 'analytic':
+        There are three methods for integration: `IntegratorType.RK4`, 
+        `IntegratorType.EULER_MARUYAMA`, and `IntegratorType.ANALYTIC`:
 
-        - 'numerical': use the Runge-Kutta 4th order method (RK4) with fixed step size `dt`. 
-        - 'analytic': use the exact solution of the linear system, calculated with a cached matrix exponential.
+        - `IntegratorType.RK4`: use the Runge-Kutta 4th order method with fixed step size `dt`.
+        - `IntegratorType.EULER_MARUYAMA`: use the Euler-Maruyama method with fixed step size `dt`. 
+        - `IntegratorType.ANALYTIC`: use the exact solution of the linear system, calculated with a cached matrix exponential. 
+        Van Loan's variance formula is used to calculate the exact discretised integrated process noise.
        
         ### Arguments
         #### Required
@@ -174,93 +193,32 @@ class Plant:
         - `t_stop` (float): stop time of integration
         - `dt` (float): step size for numerical integration
         #### Optional
+        - `method` (IntegratorType, default = IntegratorType.RK4): integration method.
         - `hold_noise_const` (bool, default = False): if True, sample once and use it across all time steps. 
         If False, sample new noise at each `dt`.
         
         ### Returns
         - `tuple[np.ndarray, np.ndarray]`: arrays of time points and state trajectory (including both endpoints).
         '''
-    
-        if method == 'numerical':
 
-            # create array [t_start, t_start + dt, t_start + 2 dt, ..., t_stop]
-            t_span = get_t_span(t_start, t_stop, dt)  # shape (num_steps,)
-            num_steps = t_span.shape[0]
+        match method:
+            case IntegratorType.RK4:
+                t_span, x_span = integrate_rk4(self, t_start, t_stop, dt, hold_noise_const)
+            case IntegratorType.EULER_MARUYAMA:
+                t_span, x_span = integrate_euler_maruyama(self, t_start, t_stop, dt, hold_noise_const)
+            case IntegratorType.ANALYTIC:
+                t_span, x_span = integrate_analytic(self, t_start, t_stop, dt, hold_noise_const)
+            case _:
+                raise ValueError(
+                    f'Invalid integration method: {method}. '
+                    'Expected one of: IntegratorType.RK4, IntegratorType.EULER_MARUYAMA, IntegratorType.ANALYTIC.'
+                )
 
-            # set empty arrays
-            x_span = np.zeros((self.dims, num_steps))  # shape (dims, num_steps)
-
-            # set initial state
-            x_span[:, 0] = self.x.reshape(self.dims,)
+        # store final state in plant attributes
+        # this becomes the initial state for the next time span when `integrate_dynamics` is called again
+        self.x = x_span[:, -1].reshape(self.dims, 1)
+        return t_span, x_span
         
-            # sample noise in advance
-            if hold_noise_const:
-                w_proc = self.sample_process_noise(n=1)  # shape (dims, 1)
-                w_proc = np.tile(w_proc, (1, num_steps))  # shape (dims, num_steps)
-            else:
-                w_proc = self.sample_process_noise(n=num_steps)
-
-            # define the function on the RHS of the update equation: x' = Ax + Bu + w_proc
-            x_dot = lambda x, u, w_proc: self.A @ x + self.B @ u + w_proc
-
-            for i in range(num_steps - 1):
-
-                # get t_i
-                t_i = t_span[i]
-
-                # get noise values at t_i
-                w_proc_i = w_proc[:, i].reshape(self.dims, 1)
-
-                # TODO: consider using the exact solution, which would be
-                # x_{i+1} = exp(A dt) @ x_i + A^{-1} @ (exp(A dt) - I) @ (B u) + integrated noise term (Brownian motion?)
-                # cache exp(A dt) and A^{-1} for efficiency
-
-                # use Runge-Kutta 4th order method (RK4) with fixed step size dt_int
-                # NOTE: dt may be different for the last step, so we use t_span[i + 1] - t_i instead of dt here
-                # NOTE: the control input is constant across the frame, so we always use self.u
-                dt_i = t_span[i + 1] - t_i
-                x_i = x_span[:, i].reshape(self.dims, 1)  # shape (dims, 1)
-                k1 = x_dot(x_i, self.u, w_proc_i)
-                k2 = x_dot(x_i + 0.5 * k1 * dt_i, self.u, w_proc_i)
-                k3 = x_dot(x_i + 0.5 * k2 * dt_i, self.u, w_proc_i)
-                k4 = x_dot(x_i + k3 * dt_i, self.u, w_proc_i)
-                x_dot_i = (k1 + 2 * k2 + 2 * k3 + k4) / 6  # x' at t_i, adjusted by RK4
-                x_span[:, i + 1] = x_span[:, i] + x_dot_i.flatten() * dt_i  # shape (dims,)
-
-            # store final state in plant attributes
-            # this becomes the initial state for the next time span when `integrate_dyamics` is called again
-            self.x = x_span[:, -1].reshape(self.dims, 1)
-
-            return t_span, x_span
-        
-        elif method == 'analytic':
-
-            if not hold_noise_const:
-                raise NotImplementedError('Analytic integration with time-varying noise is not implemented yet.')
-            
-            # TODO: consider using the exact solution, which would be
-            # x_{i+1} = exp(A dt) @ x_i + A^{-1} @ (exp(A dt) - I) @ (B u) + integrated noise term (Brownian motion?)
-            # cache exp(A dt) and A^{-1} for efficiency
-
-            # TODO: generalise to allow for noise - need to replace (B u) with (B u + w_proc) and then 
-            # need to decide how to handle the integrated noise term (Wiener process/Brownian motion?)
-
-            first_bit = (self.exp_A_t_span @ self.x)  # shape (num_steps, dims, 1)
-            bu_plus_noise = self.B @ self.u + self.sample_process_noise(n=1)  # shape (dims, 1)
-            exp_A_dt_minus_I = self.exp_A_t_span - np.eye(self.dims)  # shape (num_steps, dims, dims)
-            second_bit = (exp_A_dt_minus_I @ self.A_inv @ bu_plus_noise)  # shape (num_steps, dims, 1)
-            x_span = (first_bit + second_bit)[:, :, 0].T  # shape (dims, num_steps)
-
-            # store final state in plant attributes
-            # this becomes the initial state for the next time span when `integrate_dyamics` is called again
-            self.x = x_span[:, -1].reshape(self.dims, 1)
-
-            # shift t_span_0 forwards to start at t_start instead of 0
-            t_span = self.t_span_0 + t_start
-
-            return t_span, x_span
-        
-
     def calc_y(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
         '''
         Calculate the true output y (no measurement noise is added)

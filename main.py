@@ -11,8 +11,9 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtCore import QTimer
 
 # local imports
-from plant import Plant
-from controllers import ControllerType, ManualController, OpenLoopController, BangBangController, PIDController
+from plant import Plant, IntegratorType
+from controllers import ControllerType, ManualController, OpenLoopController, \
+    BangBangController, PIDController
 from gui import GUI
 from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAULT_PARAMS, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST, ANIM_SPEED_FACTOR, MAX_FRAMES_PER_TICK
 
@@ -92,7 +93,7 @@ class Simulation(QWidget):
             setattr(self, param, GUI_SLIDER_CONFIG[param]['init'])
 
         # init GUI window
-        self.gui = GUI(self, dump_logs_on_stop=LOGGING_ON)
+        self.gui = GUI(self, dump_logs_on_stop=False)
         self.gui.init_gui()
 
         # start simulation ticker
@@ -172,12 +173,10 @@ class Simulation(QWidget):
         # update plant control input
         self.plant.u = u
 
-        #if LOGGING_ON:
-        #    self.logger.debug(f'For frame starting at t = {t_start:.5f}: \t used u = {u.item():.10f}, \t y_sp = {self.y_sp.item():.5f}, \t y_meas = {self.plant.y_meas.item():.5f}, \t e = {e.item()}.')
-
         # solve dynamics
         t_stop = t_start + self.dt_anim
-        t_span, x_span = self.plant.integrate_dynamics(t_start, t_stop, self.dt_int, method='numerical', hold_noise_const=False)  # shapes (num_steps,), (dims, num_steps)
+        t_span, x_span = self.plant.integrate_dynamics(t_start, t_stop, self.dt_int, 
+            method=IntegratorType.EULER_MARUYAMA, hold_noise_const=False)  # shapes (num_steps,), (dims, num_steps)
 
         # calculate true output (without noise)
         y_span = self.plant.calc_y(x_span, u=np.tile(u, (1, x_span.shape[1])))  # shape (1, num_steps)
