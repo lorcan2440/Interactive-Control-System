@@ -259,6 +259,8 @@ class GUI:
         # toggle the simulation ticker on and off
         if not self.sim.running:  # start
             # ticker times out (calls the update) every real dt_anim / ANIM_SPEED_FACTOR seconds
+            self.sim.wall_time_prev = None
+            self.sim.sim_time_remainder = 0.0
             self.sim.ticker.start(int(self.sim.dt_anim * 1000 / ANIM_SPEED_FACTOR))
             self.sim.running = True
             self.start_stop_button.setText('Stop')
@@ -275,6 +277,8 @@ class GUI:
                     f'shapes: {self.t_data.shape, self.x_data.shape, self.y_data.shape, self.t_meas.shape}\n'
                     f'{self.y_meas.shape, self.u_data.shape, self.y_sp_data.shape}\n\n')
             self.sim.ticker.stop()
+            self.sim.wall_time_prev = None
+            self.sim.sim_time_remainder = 0.0
             self.sim.running = False
             self.start_stop_button.setText('Start')
 
@@ -435,6 +439,8 @@ class GUI:
             # resume simulation if it was running before
             if was_running:
                 try:
+                    self.sim.wall_time_prev = None
+                    self.sim.sim_time_remainder = 0.0
                     self.sim.ticker.start(int(self.sim.dt_anim * 1000 / ANIM_SPEED_FACTOR))
                 except Exception:
                     pass

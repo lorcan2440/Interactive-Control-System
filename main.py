@@ -3,6 +3,7 @@
 
 # built-ins
 import sys
+import time
 
 # external imports
 import numpy as np
@@ -13,7 +14,8 @@ from PyQt6.QtCore import QTimer
 from plant import Plant
 from controllers import ControllerType, ManualController, OpenLoopController, BangBangController, PIDController
 from gui import GUI
-from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAULT_PARAMS, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
+from utils import get_logger, MAX_FRAMES_PER_TICK, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, \
+    PLANT_DEFAULT_PARAMS, GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST, ANIM_SPEED_FACTOR
 
 
 class Simulation(QWidget):
@@ -59,9 +61,12 @@ class Simulation(QWidget):
             self.logger.disabled = True
 
         # set time step sizes
-        self.dt_int = TIME_STEPS['DT_INT']  # integration time step for solving dynamics
-        self.dt_anim = TIME_STEPS['DT_ANIM']  # animation (frame) and control loop time step
-        self.dt_window = TIME_STEPS['DT_SLIDING_WINDOW']  # time window size for sliding window plot
+        # dt_int: integration step size dt for solving state update equations
+        self.dt_int = TIME_STEPS['DT_INT']
+        # dt_anim: animation (frame) and control loop time step (= real time between frames, if no limiting factors)
+        self.dt_anim = TIME_STEPS['DT_ANIM']
+        # dt_window: time window size for sliding window plot
+        self.dt_window = TIME_STEPS['DT_SLIDING_WINDOW']
 
         # present time
         self.t = 0.0
@@ -101,20 +106,38 @@ class Simulation(QWidget):
         # initially stopped
         self.running = False
 
+        # track elapsed wall time - simulation progression is based on real time
+        self.wall_time_prev = None
+        self.sim_time_remainder = 0.0
+
     def update_frame(self):
         '''
         Update the simulation for one frame of the interactive control loop. 
         This is called by a timer every `self.dt_anim` seconds.
         '''
+        # accumulate elapsed real time scaled to simulation time
+        t_now = time.perf_counter()
+        if self.wall_time_prev is None:
+            self.wall_time_prev = t_now
+            return
 
-        # get current time
-        t_start = self.t
+        self.sim_time_remainder += (t_now - self.wall_time_prev) * ANIM_SPEED_FACTOR
+        self.wall_time_prev = t_now
 
-        # solve dynamics for this frame
-        t_span, x_span, y_span, y_meas = self.solve_one_frame(t_start)
+        # consume available simulation-time budget in fixed dt_anim chunks
+        frames_done = 0
+        while self.sim_time_remainder + self.EPS >= self.dt_anim and frames_done < MAX_FRAMES_PER_TICK:
+            # get current time
+            t_start = self.t
 
-        # update GUI with new data
-        self.gui.update_plots(t_span, x_span, y_span, y_meas)
+            # solve dynamics for this frame
+            t_span, x_span, y_span, y_meas = self.solve_one_frame(t_start)
+
+            # update GUI with new data
+            self.gui.update_plots(t_span, x_span, y_span, y_meas)
+
+            self.sim_time_remainder -= self.dt_anim
+            frames_done += 1
 
     def solve_one_frame(self, t_start: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         '''
