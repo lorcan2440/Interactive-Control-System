@@ -227,7 +227,7 @@ class Plant:
                 case IntegratorType.RK4:
                     t_span, x_span = integrate_rk4(self, t_start, t_stop, dt)
                 case IntegratorType.ANALYTIC_ODE:
-                    t_span, x_span = integrate_analytic_ode(self, t_start, t_stop, dt)
+                    t_span, x_span = integrate_analytic_ode(self, t_start)
                 case _:
                     raise ValueError(
                         f'Invalid integration method for use_ode_mode = True: {method}. '
@@ -239,7 +239,7 @@ class Plant:
                 case IntegratorType.EULER_MARUYAMA:
                     t_span, x_span = integrate_euler_maruyama(self, t_start, t_stop, dt)
                 case IntegratorType.ANALYTIC_SDE:
-                    t_span, x_span = integrate_analytic_sde(self, t_start, t_stop, dt)
+                    t_span, x_span = integrate_analytic_sde(self, t_start)
                 case _:
                     raise ValueError(
                         f'Invalid integration method for use_ode_mode = False: {method}. '

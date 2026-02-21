@@ -85,8 +85,7 @@ def integrate_rk4(plant, t_start: float, t_stop: float, dt: float) -> tuple[np.n
 
     return t_span, x_span
 
-def integrate_analytic_ode(plant, t_start: float, t_stop: float, dt: float) \
-        -> tuple[np.ndarray, np.ndarray]:
+def integrate_analytic_ode(plant, t_start: float) -> tuple[np.ndarray, np.ndarray]:
     """
     Solves the ODE: dx/dt = A x + B u + w_proc, where w_proc is a constant process noise term
     sampled at the start of the integration interval. This is not mathematically equivalent to
@@ -96,11 +95,11 @@ def integrate_analytic_ode(plant, t_start: float, t_stop: float, dt: float) \
     x(t) = e^{A t} @ x_0 + A^{-1} @ (e^{A t} - I) @ (B u + w_proc), where x_0 is the initial 
     state at the start of the integration interval.
 
+    NOTE: the endpoint and step size is fixed, and is set in Plant.t_span_0.
+
     ### Arguments
     - `plant`: the plant to integrate
     - `t_start`: start time of the integration interval. Shape: scalar
-    - `t_stop`: stop time of the integration interval. Shape: scalar
-    - `dt`: time step for the output time points. Shape: scalar
 
     ### Returns
     - `tuple[np.ndarray, np.ndarray]`: arrays of time points and state trajectory over the integration interval 
@@ -183,8 +182,7 @@ def integrate_euler_maruyama(plant, t_start: float, t_stop: float, dt: float) ->
 
     return t_span, x_span
 
-def integrate_analytic_sde(plant, t_start: float, t_stop: float, dt: float) \
-        -> tuple[np.ndarray, np.ndarray]:
+def integrate_analytic_sde(plant, t_start: float) -> tuple[np.ndarray, np.ndarray]:
     
     """
     Solves the Itô SDE: dx = (A x + B u) dt + d_eta_t, where eta_t is a scaled Wiener process 
@@ -196,11 +194,11 @@ def integrate_analytic_sde(plant, t_start: float, t_stop: float, dt: float) \
     covariance matrix Q_d over the integration interval, and samples noise from N(0, Q_d) to
     get an exact sample solution to the SDE.
 
+    NOTE: the endpoint and step size is fixed, and is set in Plant.t_span_0.
+
     ### Arguments
     - `plant`: the plant to integrate
     - `t_start`: start time of the integration interval. Shape: scalar
-    - `t_stop`: stop time of the integration interval. Shape: scalar
-    - `dt`: time step for the output time points. Shape: scalar
 
     ### Returns
     - `tuple[np.ndarray, np.ndarray]`: arrays of time points and state trajectory over 
