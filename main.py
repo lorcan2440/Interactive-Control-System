@@ -181,10 +181,7 @@ class Simulation(QWidget):
         # update plant control input
         self.plant.u = u
 
-        #if LOGGING_ON:
-        #    self.logger.debug(f'For frame starting at t = {t_start:.5f}: \t used u = {u.item():.10f}, \t y_sp = {self.y_sp.item():.5f}, \t y_meas = {self.plant.y_meas.item():.5f}, \t e = {e.item()}.')
-
-        # solve dynamics
+        # solve dynamics over this frame (u is held constant)
         t_stop = t_start + self.dt_anim
         t_span, x_span = self.plant.integrate_dynamics(t_start=t_start, t_stop=t_stop, dt=self.dt_int)
 
@@ -194,7 +191,7 @@ class Simulation(QWidget):
         # get measurement noise at end of frame
         self.plant.y_meas = y_span[0, -1] + self.plant.sample_measurement_noise(n=1)  # shape (1, 1)
 
-        # advance simulation time
+        # advance simulation time to end of this frame (= start of next frame)
         self.t = t_stop
 
         return t_span, x_span, y_span, self.plant.y_meas

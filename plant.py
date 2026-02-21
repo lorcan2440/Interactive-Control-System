@@ -220,8 +220,12 @@ class Plant:
         '''
         Calculate the true output y (no measurement noise is added)
 
-        - x: state vectors. Shape: (dims, n) (array of column vectors)
-        - u: control inputs. Shape: (1, n) (row vector)
+        ### Arguments
+        - `x` (np.ndarray): state vectors. Shape: (dims, n) (array of column vectors)
+        - `u` (np.ndarray): control inputs. Shape: (1, n) (row vector)
+
+        ### Returns
+        - `np.ndarray`: output vectors. Shape: (1, n) (row vector)
         '''
         return self.C @ x + self.D @ u
     
@@ -236,16 +240,22 @@ class Plant:
         ### Returns
         - `np.ndarray`: measurement noise samples. Shape (1, `n`) (row vector)
         '''
-        
-        return np.random.normal(loc=0.0, scale=np.sqrt(self.R[0, 0]), size=(1, n))  # shape (1, n)
+        std_dev = np.sqrt(self.R[0, 0])
+        return np.random.normal(loc=0.0, scale=std_dev, size=(1, n))  # shape (1, n)
     
-    def sample_measurement(self):
+    def sample_measurement(self) -> np.ndarray:
         '''
         Sample of the noisy measurement y, given the current state `x` and control input `u`, 
-        and including measurement noise. 
+        and including measurement noise.
+
+        This function is only called once, at the start of the first frame.
         
-        Set the attributes `self.y` (the true output without noise) and `self.y_meas` (the measured output with noise).
+        Set the attributes `self.y` (the true output without noise) and 
+        `self.y_meas` (the measured output with noise).
+
+        ### Returns
+        - `np.ndarray`: the measured output with noise. Shape: (1, 1) (scalar)
         '''
-        self.y = self.calc_y(self.x, self.u)
-        self.y_meas = self.y + self.sample_measurement_noise(n=1)
+        self.y = self.calc_y(self.x, self.u)  # shape (1, 1)
+        self.y_meas = self.y + self.sample_measurement_noise(n=1)  # shape (1, 1)
         return self.y_meas
