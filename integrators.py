@@ -106,14 +106,13 @@ def integrate_analytic_ode(plant, t_start: float) -> tuple[np.ndarray, np.ndarra
     (including both endpoints).
     """
     t_span = plant.t_span_0 + t_start
-    I = np.eye(plant.dims)
 
     # compute Phi
     Phi = plant.exp_A_t_span  # shape (num_steps, dims, dims)
     # compute B u + w_proc  (where w_proc is constant)
     Bu_plus_w = plant.B @ plant.u + plant.sample_process_noise(n=1)  # shape (dims, 1)
     # compute A^{-1} @ (e^{A t} - I) @ (B u + w_proc)
-    Phi_plus = np.linalg.solve(plant.A, (Phi - I))  # shape (num_steps, dims, dims)
+    Phi_plus = plant.A_inv_exp_At_minus_I  # shape (num_steps, dims, dims)
     # compute x using exact solution:
     # x = e^{A t} @ x_0 + A^{-1} @ (e^{A t} - I) @ (B u + w_proc)
     x_span = (Phi @ plant.x + Phi_plus @ Bu_plus_w)[:, :, 0].T  # shape (dims, num_steps)
@@ -161,7 +160,8 @@ def integrate_euler_maruyama(plant, t_start: float, t_stop: float, dt: float) ->
     # set initial state
     x_span[:, 0] = plant.x.reshape(plant.dims,)
 
-    Bu = plant.B @ plant.u  # shape (dims, 1)
+    # get matrices and control input
+    A, B, u = plant.A, plant.B, plant.u
 
     # NOTE: draw from N(0, Q) for each time step to get diffusion innovations
     # this gets scaled by sqrt(dt) in the update loop to get the correct covariance for the diffusion term
@@ -176,9 +176,10 @@ def integrate_euler_maruyama(plant, t_start: float, t_stop: float, dt: float) ->
 
         eta_proc_i = eta_proc[:, i].reshape(plant.dims, 1)
         sqrt_dt = np.sqrt(dt_i)
+
         # Euler-Maruyama update:
         # x_{i+1} = x_i + (A x_i + B u) dt + eta_i sqrt(dt), where eta_i ~ N(0, Q)
-        x_span[:, i + 1] = x_span[:, i] + (plant.A @ x_i + Bu)[:, 0] * dt_i + eta_proc_i[:, 0] * sqrt_dt
+        x_span[:, i + 1] = x_span[:, i] + (A @ x_i + B @ u)[:, 0] * dt_i + eta_proc_i[:, 0] * sqrt_dt
 
     return t_span, x_span
 
@@ -206,38 +207,29 @@ def integrate_analytic_sde(plant, t_start: float) -> tuple[np.ndarray, np.ndarra
     """
 
     t_span = plant.t_span_0 + t_start
-    num_steps = t_span.shape[0]
-    I = np.eye(plant.dims)
+    num_steps = plant.num_steps
 
-    # compute Van Loan block matrix
-    # source: https://personales.upv.es/asala/DocenciaOnline/material/DiscretizRuidoVanLoanEN.pdf
-    M = np.block([[plant.A,                  plant.Q   ],
-                  [np.zeros_like(plant.A),   -plant.A.T]])  # shape (2 * dims, 2 * dims)
-    M_exp = expm(M * plant.dt_int)  # shape (2 * dims, 2 * dims)
-    Phi = M_exp[:plant.dims, :plant.dims]  # shape (dims, dims)
-    S = M_exp[:plant.dims, plant.dims:]  # shape (dims, dims)
-    Q_d = S @ Phi.T  # shape (dims, dims)
+    # get discretised state update equation matrices
+    Gamma = plant.Gamma  # shape (dims, 1)
+    Phi = plant.Phi  # shape (dims, dims)
 
-    # check Q_d is close to being symmetric (it should already be)
-    if not np.allclose(Q_d, Q_d.T, atol=EPS):
-        plant.logger.warning(f'''Integrated process noise covariance matrix Q_d is 
-            not symmetric. Q_d: {Q_d}. Taking the symmetric component and continuing.''')
-
-    # take the symmetric component (ideally no change to within numerical precision)
-    Q_d = 0.5 * (Q_d + Q_d.T)
-
-    Gamma = np.linalg.solve(plant.A, (Phi - I) @ plant.B)
-    Gamma_u = (Gamma @ plant.u).flatten()
+    # get control input
+    u = plant.u[0]  # shape (1,)
 
     # sample integrated process noise
-    w_proc_int = np.random.multivariate_normal(mean=np.zeros(plant.dims), cov=Q_d,
+    w_proc_int = np.random.multivariate_normal(mean=np.zeros(plant.dims), cov=plant.Q_d,
         size=num_steps - 1, check_valid='raise').T
 
     # use state update equation: x_{i+1} = Phi @ x_i + Gamma @ u + w_proc_int
     # where w_proc_int ~ N(0, Q_d)
     x_span = np.zeros((plant.dims, num_steps))
     x_span[:, 0] = plant.x[:, 0]
-    for i in range(num_steps - 1):
-        x_span[:, i + 1] = Phi @ x_span[:, i] + Gamma_u + w_proc_int[:, i]
+    for i in range(num_steps - 2):
+        x_span[:, i + 1] = Phi @ x_span[:, i] + Gamma @ u + w_proc_int[:, i]
+
+    # last step - use Phi_last, Gamma_last and Q_d_last (based on last integrator step size)
+    w_proc_int_last = np.random.multivariate_normal(mean=np.zeros(plant.dims), cov=plant.Q_d_last,
+        size=1, check_valid='raise').T
+    x_span[:, -1] = plant.Phi_last @ x_span[:, -2] + plant.Gamma_last @ u + w_proc_int_last[:, 0]
 
     return t_span, x_span

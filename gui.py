@@ -177,7 +177,6 @@ class GUI:
         container, slider, val_label = make_slider_from_cfg('y_sp', 'Setpoint')
         slider.valueChanged.connect(self.on_setpoint_slider_changed)
 
-        # show descriptive text in the value label for consistency
         sp = sp_cfg.get('init', sp_cfg['min'])
         val_label.setText(f"Setpoint: {sp:.2f}")
         sp_layout.addWidget(container)
@@ -269,7 +268,7 @@ class GUI:
                               max(self.sim.dt_window, self.t_data[-1]))
 
         if self.is_csv_logging:
-            self.write_realtime_log_line()
+            self.write_to_csv_and_log()
 
     ## UI callbacks
 
@@ -311,7 +310,7 @@ class GUI:
         self.csv_log_file = None
         self.logging_button.setText('Start Logging')
 
-    def write_realtime_log_line(self):
+    def write_to_csv_and_log(self):
         if self.csv_writer is None or self.csv_log_file is None:
             return
 
@@ -468,9 +467,9 @@ class GUI:
 
             # pre-fill with current plant matrices if available
             A, B, C, D = self.sim.plant.A, self.sim.plant.B, self.sim.plant.C, self.sim.plant.D
-            widget.set_matrices(np.asarray(A), np.asarray(B), np.asarray(C), np.asarray(D))
+            widget.set_table_ABCD(np.asarray(A), np.asarray(B), np.asarray(C), np.asarray(D))
             Q, R = self.sim.plant.Q, self.sim.plant.R
-            widget.set_noise_matrices(np.asarray(Q), np.asarray(R))
+            widget.set_table_QR(np.asarray(Q), np.asarray(R))
 
             dlg_layout.addWidget(widget)
 
@@ -479,7 +478,7 @@ class GUI:
 
             def _update_eigs(*_):
                 try:
-                    A_cur, _, _, _ = widget.get_matrices()
+                    A_cur, _, _, _ = widget.get_table_ABCD()
                 except Exception:
                     eig_label.setText('Eigenvalues: (invalid)')
                     return
@@ -521,13 +520,12 @@ class GUI:
     def on_accept_change_plant(self, widget, dialog):
         # called when "OK" is clicked in the change plant dialog box
 
-        A_new, B_new, C_new, D_new = widget.get_matrices()
-        Q_new, R_new = widget.get_noise_matrices()
+        A_new, B_new, C_new, D_new = widget.get_table_ABCD()
+        Q_new, R_new = widget.get_table_QR()
 
         try:
             # apply new matrices to plant
-            self.sim.plant.set_state_space_matrices(A_new, B_new, C_new, D_new)
-            self.sim.plant.set_noise_matrices(Q=Q_new, R=R_new)
+            self.sim.plant.set_all_arrays(A_new, B_new, C_new, D_new, Q_new, R_new)
 
         except ValueError as e:
             if str(e) == "State-space matrices have incorrect dimensions.":
@@ -549,16 +547,14 @@ class GUI:
                 QMessageBox.warning(dialog, 'Invalid noise matrices', str(e))
                 return
 
-            # apply the new state-space matrices
-            self.sim.plant.set_state_space_matrices(A_new, B_new, C_new, D_new)
-            self.sim.plant.set_noise_matrices(Q=Q_new, R=R_new)
+            # apply the new state-space matrices (and recalculate cached values in the plant)
+            self.sim.plant.set_all_arrays(A_new, B_new, C_new, D_new, Q_new, R_new)
 
             # clear data buffers and graph areas
             self.clear_buffers()
             self.clear_graph_traces()
 
         # for controllers that use plant matrices, recalculate any of their needed params
-        self.sim.openloop_controller.calc_ss_gain()
         self.sim.pid_controller.reset_memory()
         self.sim.use_ode_mode = widget.use_ode_mode
         self.sim.integrator_method = widget.get_integrator_method()
@@ -744,7 +740,7 @@ class StateSpaceMatrixInput(QWidget):
         self.fill_table_with_zeros(self.table_Q, dims, dims)
         self.fill_table_with_zeros(self.table_R, 1, 1)
 
-    def set_matrices(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray):
+    def set_table_ABCD(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray):
         """Set the table contents from numpy arrays. Shapes must match dims.
 
         This will resize the internal tables to match the provided `A` shape.
@@ -783,7 +779,7 @@ class StateSpaceMatrixInput(QWidget):
 
         self.table_D.item(0, 0).setText(f'{float(D[0, 0]):.6g}')
 
-    def set_noise_matrices(self, Q: np.ndarray, R: np.ndarray):
+    def set_table_QR(self, Q: np.ndarray, R: np.ndarray):
         Q = np.asarray(Q)
         R = np.asarray(R)
         if Q.shape != (self.dims, self.dims) or R.shape != (1, 1):
@@ -794,7 +790,7 @@ class StateSpaceMatrixInput(QWidget):
                 self.table_Q.item(i, j).setText(f'{float(Q[i, j]):.6g}')
         self.table_R.item(0, 0).setText(f'{float(R[0, 0]):.6g}')
 
-    def get_matrices(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def get_table_ABCD(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Return (A, B, C, D) as numpy arrays of shapes (dims, dims), (dims, 1), (1, dims), (1, 1).
         Raises ValueError if any cell is empty or contains invalid float.
@@ -833,7 +829,7 @@ class StateSpaceMatrixInput(QWidget):
         except Exception:
             raise ValueError('Matrix contains empty or invalid entries')
 
-    def get_noise_matrices(self) -> tuple[np.ndarray, np.ndarray]:
+    def get_table_QR(self) -> tuple[np.ndarray, np.ndarray]:
         try:
             Q = np.zeros((self.dims, self.dims), dtype=float)
             for i in range(self.dims):
