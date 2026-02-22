@@ -18,16 +18,18 @@ LOGGING_ON = True
 
 # default slider parameters for controllers and plant
 GUI_SLIDER_CONFIG = {
-    'manual_u':      {'min': -5.0,  'max': 5.0,     'step': 0.1,    'init': 0.0},
-    'y_sp':          {'min': -1.0,  'max': 1.0,     'step': 0.01,   'init': 1.0},
-    'w_proc_stddev': {'min': 0.0,   'max': 2.0,     'step': 0.01,   'init': 0.0},
-    'w_meas_stddev': {'min': 0.0,   'max': 0.25,    'step': 0.005,  'init': 0.0},
-    'U_plus':        {'min': 0.0,   'max': 5.0,     'step': 0.1,    'init': 4.0},
-    'U_minus':       {'min': -5.0,  'max': 0.0,     'step': 0.1,    'init': -4.0},
-    'K_p':           {'min': 0.0,   'max': 200.0,   'step': 1.0,    'init': 20.0},
-    'K_i':           {'min': 0.0,   'max': 20.0,    'step': 0.05,   'init': 0.0},
-    'K_d':           {'min': 0.0,   'max': 50.0,    'step': 0.05,   'init': 0.0},
-    'tau':           {'min': 0.0001, 'max': 1.0,    'step': 0.001,  'init': 0.01},
+    'manual_u':      {'min': -5.0,   'max': 5.0,     'step': 0.1,    'init': 0.0},
+    'y_sp':          {'min': -1.0,   'max': 1.0,     'step': 0.01,   'init': 1.0},
+    'w_proc_stddev': {'min': 0.0,    'max': 2.0,     'step': 0.01,   'init': 0.0},
+    'w_meas_stddev': {'min': 0.0,    'max': 0.25,    'step': 0.005,  'init': 0.0},
+    'U_plus':        {'min': 0.0,    'max': 5.0,     'step': 0.1,    'init': 4.0},
+    'U_minus':       {'min': -5.0,   'max': 0.0,     'step': 0.1,    'init': -4.0},
+    'K_p':           {'min': 0.0,    'max': 200.0,   'step': 1.0,    'init': 20.0},
+    'K_i':           {'min': 0.0,    'max': 20.0,    'step': 0.05,   'init': 0.0},
+    'K_d':           {'min': 0.0,    'max': 50.0,    'step': 0.05,   'init': 0.0},
+    'tau':           {'min': 0.0001, 'max': 1.0,     'step': 0.001,  'init': 0.01},
+    'u_sat_plus':    {'min': 0.0,    'max': 50.0,    'step': 1.0,    'init': 25.0},
+    'u_sat_minus':   {'min': -50.0,  'max': 0.0,     'step': 1.0,    'init': -25.0},
 }
 
 # time step sizes for integration, animation and sliding window
@@ -37,7 +39,7 @@ GUI_SLIDER_CONFIG = {
 TIME_STEPS = {
     'DT_INT': 0.001,
     'DT_ANIM': 1 / 60,  # 60 FPS
-    'DT_SLIDING_WINDOW': 10.000,
+    'DT_SLIDING_WINDOW': 0.1,
 }
 
 MAX_FRAMES_PER_TICK = 10  # prevent infinite loop if frames take too long to compute
@@ -55,7 +57,8 @@ MAX_SIG_FIGS = 10
 EPS = 10 ** (-1 * MAX_SIG_FIGS)
 
 # controller parameters available in the GUI
-CONTROLLER_PARAMS_LIST = ['manual_u', 'K_p', 'K_i', 'K_d', 'tau', 'U_plus', 'U_minus']
+CONTROLLER_PARAMS_LIST = ['manual_u', 'K_p', 'K_i', 'K_d', 'tau', 'U_plus', 'U_minus', 
+                          'u_sat_plus', 'u_sat_minus']
 
 # default process and measurement noise variances
 w_proc_var_init = GUI_SLIDER_CONFIG['w_proc_stddev']['init'] ** 2

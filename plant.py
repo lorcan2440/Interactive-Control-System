@@ -131,17 +131,6 @@ class Plant:
                 self.logger.warning(f'Plant is asymptotically stable, but has fast dynamics compared to sampling period. '
                     f'Numerical issues may arise. Eigenvalues of A: {eigs}. Sampling period: {t_sample}. '
                     f'Fastest time constant: {min_time_constant}.')
-                
-        # set cached matrices and values - used in plant integration and controller design
-        # t_span_0: fixed time points for one integration interval, starting from zero
-        self.t_span_0 = get_t_span(0, self.dt_anim, self.dt_int)
-        # exp_A_t_span: precompute the matrix exponential of A * t for all time points in t_span_0
-        A_t_span = np.outer(self.t_span_0, A.flatten()).reshape(self.t_span_0.shape[0], A.shape[0], A.shape[1])  # shape (num_steps, dims, dims)
-        self.exp_A_t_span = expm(A_t_span)  # shape (num_steps, dims, dims)
-        # A_inv_exp_At_minus_I: precompute A^{-1} @ (e^{A t} - I)
-        self.A_inv_exp_At_minus_I = np.linalg.solve(A, (self.exp_A_t_span - np.eye(A.shape[0])))  # shape (num_steps, dims, dims)
-        # G_0: the transfer function G(s) = C @ (sI - A)^{-1} @ B + D evaluated at s = 0
-        self.G_0 = D - C @ np.linalg.solve(A, B)
 
         # set state space matrices
         self.A = A
@@ -197,12 +186,16 @@ class Plant:
         # get current state space matrices
         A, B, C, D, Q, R, dims = self.A, self.B, self.C, self.D, self.Q, self.R, self.dims
 
-        # compute ODE discretisation matrices
+        # ODE discretisation matrices
+        # t_span_0: fixed time points for one integration interval, starting from zero
         self.t_span_0 = get_t_span(0, self.dt_anim, self.dt_int)
         self.num_steps = self.t_span_0.shape[0]
-        A_t_span = np.outer(self.t_span_0, A.flatten()).reshape(self.num_steps, dims, dims)
-        self.exp_A_t_span = expm(A_t_span)
-        self.A_inv_exp_At_minus_I = np.linalg.solve(A, (self.exp_A_t_span - np.eye(dims)))
+        # exp_A_t_span: precompute the matrix exponential of A * t for all time points in t_span_0
+        A_t_span = np.outer(self.t_span_0, A.flatten()).reshape(self.t_span_0.shape[0], self.dims, self.dims)  # shape (num_steps, dims, dims)
+        self.exp_A_t_span = expm(A_t_span)  # shape (num_steps, dims, dims)
+        # A_inv_exp_At_minus_I: precompute A^{-1} @ (e^{A t} - I)
+        self.A_inv_exp_At_minus_I = np.linalg.solve(A, (self.exp_A_t_span - np.eye(A.shape[0])))  # shape (num_steps, dims, dims)
+        # G_0: the transfer function G(s) = C @ (sI - A)^{-1} @ B + D evaluated at s = 0
         self.G_0 = D - C @ np.linalg.solve(A, B)
 
         # M: Van Loan block matrix
@@ -210,7 +203,8 @@ class Plant:
         M = np.block([[A,                  Q   ],
                       [np.zeros_like(A),   -A.T]])  # shape (2 * dims, 2 * dims)
         
-        # compute SDE discretisation matrices Phi, Gamma and Q_d based on a time step of self.dt_int
+        # SDE discretisation matrices: Phi, Gamma and Q_d, 
+        # based on a normal time step of self.dt_int
         exp_M = expm(M * self.dt_int)  # shape (2 * dims, 2 * dims)
         self.Phi = exp_M[:dims, :dims]
         self.Q_d = exp_M[:dims, dims:] @ self.Phi.T
@@ -222,8 +216,9 @@ class Plant:
         self.Q_d = 0.5 * (self.Q_d + self.Q_d.T)
         self.Gamma = np.linalg.solve(A, (self.Phi - np.eye(dims)) @ B)  # shape (dims, 1)
 
-        # compute SDE discretisation matrices Phi, Gamma and Q_d based on the last time step of self.t_span_0 (to check for any discrepancies with the above)
-        dt_int_last = self.dt_anim - self.t_span_0[-2]
+        # SDE discretisation matrices: Phi, Gamma and Q_d,
+        # based on the last time step of self.t_span_0 
+        dt_int_last = self.t_span_0[-1] - self.t_span_0[-2]
         if np.isclose(dt_int_last, self.dt_int, atol=EPS):
             # last time step is equal to self.dt_int, so no need to recompute
             self.Phi_last = self.Phi
@@ -246,6 +241,11 @@ class Plant:
             self.G_cov = cholesky(Q, lower=True)  # shape (dims, dims)
         except np.linalg.LinAlgError:  # Q = 0 gives error due to zero eigenvalues, so set to zero manually
             self.G_cov = np.zeros((dims, dims))
+
+        # discrete-time controller matrices, under zero-order hold (ZOH)
+        # x_{k+1} = A_d x_k + B_d u_k
+        self.A_d = expm(A * self.dt_anim)  # shape: (dims, dims)
+        self.B_d = np.linalg.solve(A, (self.A_d - np.eye(A.shape[0])) @ B)  # shape: (dims, 1)
 
     def set_all_arrays(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray, \
             Q: np.ndarray, R: np.ndarray):

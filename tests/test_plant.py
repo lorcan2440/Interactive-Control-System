@@ -139,7 +139,7 @@ def test_dynamics(plant_factory):
 
     # Case 3: step response with process noise, allowed to vary
     plant = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-    plant.set_noise_matrices(Q=np.array([[0.0, 0.0], [0.0, 0.3**2]]))
+    plant.set_noise_matrices(Q=np.array([[0.0, 0.0], [0.0, 0.3**2]]), R=np.zeros((1, 1)))
     t_span, x_span = plant.integrate_dynamics(
         t_start=0.0, t_stop=(n - 1) * dt, dt=dt,
         method=IntegratorType.EULER_MARUYAMA, use_ode_mode=False)
@@ -148,31 +148,34 @@ def test_dynamics(plant_factory):
 
     # Case 4: step response with process noise, held constant
     plant = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-    plant.set_noise_matrices(Q=np.array([[0.0, 0.0], [0.0, 0.3**2]]))
+    plant.set_noise_matrices(Q=np.array([[0.0, 0.0], [0.0, 0.3**2]]), R=np.zeros((1, 1)))
     t_span, x_span = plant.integrate_dynamics(
-        t_start=0.0, t_stop=(n - 1) * dt, dt=dt,
-        method=IntegratorType.RK4, use_ode_mode=True)
+        t_start=0.0, t_stop=(n - 1) * dt, dt=dt, method=IntegratorType.RK4, use_ode_mode=True)
     assert np.array_equal(x_span[:, 0], np.array([0.0, 0.0]))  # check initial state
     assert np.allclose(x_span[:, -1], np.array([2.1, 1.0]), atol=0.5)  # check final state (near [2.1, 1.0]), bigger tolerance
 
 
 def test_dynamics_analytic_use_ode_mode_false(plant_factory):
 
-    # with zero process noise, both analytic branches should give the same trajectory
+    # with zero noise, both the analytic SDE and ODE solvers should give identical solutions
     dt = 0.001
     t_stop = 1 / 60
 
-    plant_false = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-    plant_false.set_noise_matrices(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
-    _, x_false = plant_false.integrate_dynamics(
+    plant = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
+    plant.set_noise_matrices(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
+    plant.set_cached_arrays()
+    plant.num_steps = plant.t_span_0.shape[0]
+
+    _, x_sde = plant.integrate_dynamics(
         t_start=0.0, t_stop=t_stop, dt=dt, method=IntegratorType.ANALYTIC_SDE, use_ode_mode=False)
 
-    plant_true = plant_factory(x_0=np.array([[0.0], [0.0]]), u_0=np.array([[3.1]]))
-    plant_true.set_noise_matrices(Q=np.zeros((2, 2)), R=np.zeros((1, 1)))
-    _, x_true = plant_true.integrate_dynamics(
+    # reset state
+    plant.x = plant.x_0.copy()
+    
+    _, x_ode = plant.integrate_dynamics(
         t_start=0.0, t_stop=t_stop, dt=dt, method=IntegratorType.ANALYTIC_ODE, use_ode_mode=True)
 
-    assert np.allclose(x_false, x_true)
+    assert np.allclose(x_sde, x_ode)
 
 
 def test_integrate_dynamics_speed_comparison(plant_factory):

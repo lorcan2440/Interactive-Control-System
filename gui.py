@@ -287,7 +287,7 @@ class GUI:
         try:
             self.csv_log_file = open(self.csv_log_path, 'w', newline='', encoding='utf-8')
             self.csv_writer = csv.writer(self.csv_log_file)
-            self.csv_writer.writerow(['t', 'u', 'x', 'y'])
+            self.csv_writer.writerow(['t', 'u', 'x', 'y', 'y_sp', 'e', 'cl_stable'])
             self.csv_log_file.flush()
         except OSError as e:
             self.csv_log_file = None
@@ -318,9 +318,17 @@ class GUI:
         u = float(self.u_data[-1])
         x = self.x_data[:, -1].tolist()
         y = float(self.y_data[0, -1])
+        y_sp = float(self.y_sp_data[-1])
+        e = y_sp - y
+        cl_stable = 'n/a'
 
-        line = f'[{t:.6f}, {u:.6f}, {x}, {y:.6f}]'
-        self.csv_writer.writerow([f'{t:.6f}', f'{u:.6f}', str(x), f'{y:.6f}'])
+        if self.sim.controller_type == ControllerType.PID:
+            cl_stable, _ = self.sim.pid_controller.is_closed_loop_stable()
+            cl_stable = str(cl_stable)
+
+
+        line = f'[{t:.6f}, {u:.6f}, {x}, {y:.6f}, {y_sp:.6f}, e={e:.6f}, cl_stable={cl_stable}]'
+        self.csv_writer.writerow([f'{t:.6f}', f'{u:.6f}', str(x), f'{y:.6f}', f'{y_sp:.6f}', f'{e:.6f}', cl_stable])
         self.csv_log_file.flush()
         self.logger.info(line)
 

@@ -3,6 +3,7 @@ from enum import Enum, auto
 
 # external imports
 import numpy as np
+from scipy.linalg import expm
 
 # local imports
 from utils import get_logger
@@ -29,6 +30,7 @@ class ManualController:
         '''
         self.sim = sim
         self.plant = plant
+        self.logger = get_logger()
 
     def calc_u(self) -> np.ndarray:
         '''
@@ -97,6 +99,7 @@ class BangBangController:
         '''
         self.sim = sim
         self.plant = plant
+        self.logger = get_logger()
 
     def calc_u(self, e: np.ndarray) -> np.ndarray:
         '''
@@ -129,12 +132,13 @@ class PIDController:
     # TODO: add function to calculate PID parameters based on Ziegler-Nichols tuning rules
     # TODO: add function to calculate PID parameters based on Cohen-Coon tuning rules
     # TODO: add function to calculate PID parameters based on pole placement, given n closed-loop poles
-    # TODO: add function to calculate gain and phase (unwrapped using first-order terms) of the OLTF at given frequency,
-    # and calculate the gain and phase margin
+    # TODO: add function to calculate gain and phase (unwrapped using first-order terms) of the OLTF at 
+    # given frequency, and calculate the gain and phase margin
 
     def __init__(self, sim: object = None, plant: object = None):
         self.sim = sim
         self.plant = plant
+        self.logger = get_logger()
         self.reset_memory()
 
     def reset_memory(self):
@@ -145,6 +149,7 @@ class PIDController:
         self.e_integrated = np.array([[0.0]])
         self.y_meas_prev = np.array([[0.0]])
         self.u_d_prev = np.array([[0.0]])
+        self.cl_stable_prev = True
 
     def calc_u(self, e: np.ndarray) -> np.ndarray:
         """
@@ -159,12 +164,25 @@ class PIDController:
         - `u`: control input. Shape: (1, 1)
         """
 
+        # check that e has correct shape
         if not isinstance(e, np.ndarray) or e.shape != (1, 1):
-            raise ValueError("e must have shape (1,1)")
+            raise ValueError("e must have shape (1, 1)")
         
-        y_meas = self.sim.y_sp - e  # get measurement
+        # check closed-loop stability
+        cl_stable, cl_z_poles = self.is_closed_loop_stable()
+        if not cl_stable and self.cl_stable_prev:  # only log one warning
+            self.logger.warning(f'''Closed-loop unstable for current PID parameters: 
+                eigenvalues of A_cl (poles in z-plane) are {cl_z_poles}. Prev: {self.cl_stable_prev}''')
+        elif cl_stable:
+            self.cl_stable_prev = True
+        else:
+            self.cl_stable_prev = False
 
-        dt = self.sim.dt_anim  # sampling period
+        # get measurement
+        y_meas = self.sim.y_sp - e
+
+        # sampling period
+        dt = self.sim.dt_anim
 
         # proportional term
         u_p = self.sim.K_p * e
@@ -195,7 +213,66 @@ class PIDController:
 
         # total control input = P + I + D
         u = u_p + u_i + u_d
+
         return u
+    
+    def is_closed_loop_stable(self) -> tuple[bool, np.ndarray]:
+        """
+        Return whether the sampled-data closed loop is asymptotically stable.
+
+        This check uses a linear P-only approximation of the current controller
+        (i.e. it ignores `K_i`, `K_d`, and derivative filtering `tau` for now):
+
+            x_dot = A x + B u,      y = C x
+            u[k] = K_p (r[k] - y[k]) = K_p (r[k] - C x[k])
+
+        With zero-order hold over one control period `T = dt_anim`, this becomes
+        the discrete-time model
+
+            x[k+1] = A_d x[k] + B_d u[k],
+            A_d = exp(A T),
+            B_d = integral_0^T exp(A t) dt @ B
+                = A^{-1}(A_d - I)B   (used below; valid when A is invertible).
+
+        Substituting the P law gives
+
+            x[k+1] = (A_d - B_d K_p C) x[k] + B_d K_p r[k]
+                   = A_cl x[k] + ... .
+
+        Stability is determined by the homogeneous part `x[k+1] = A_cl x[k]`:
+        all closed-loop poles/eigenvalues `z_i` of `A_cl` must satisfy `|z_i| < 1`.
+
+        For low-order scalar characteristic polynomials, the Jury criterion 
+        gives equivalent inequalities. Here we check the equivalent eigenvalue 
+        condition directly.
+
+        Continuous-time analogue: poles `s_i` must satisfy `Re(s_i) < 0`.
+        Under exact sampling, `z_i = exp(s_i T)`.
+        """
+
+        # get plant matrices
+        C = self.plant.C  # shape: (1, dims)
+
+        # TODO: can we also calculate this using the continuous-time closed-loop
+        # matrix, then use the "are all eigenvalues in the left half plane?" criterion 
+        # for stability (Laplace check instead of Z-transform check)?
+        # use the relation z_i = exp(s_i T) to convert between the two
+
+        # TODO: generalise to allowing D != 0
+
+        # TODO: generalise to K_i, K_d != 0, including the effect of tau
+
+        # get discrete-time matrices
+        A_d, B_d = self.plant.A_d, self.plant.B_d  # shapes: (dims, dims), (dims, 1)
+
+        # when the loop is closed: u_k = K_p * (y_sp - C x_k), so
+        # x_{k+1} = A_cl x_k + B_d @ K_p * y_sp, where A_cl = A_d - B_d @ K_p @ C
+        A_cl = A_d - B_d @ (self.sim.K_p * C)  # closed-loop state transition matrix
+
+        # Jury stability test: all discrete-time poles z must have |z| < 1
+        z_poles = np.linalg.eigvals(A_cl)
+        return np.all(np.abs(z_poles) < 1.0), z_poles
+
 
 # TODO: implement the H2 optimal controller from first principles - 
 # do not just copy the below blindly as it gave suspicious results previously

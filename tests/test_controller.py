@@ -6,6 +6,7 @@ import pytest
 if __name__ == '__main__':
     import __init__
 from controllers import ManualController, OpenLoopController, BangBangController, PIDController
+from plant import Plant
 
 
 # TODO: improve these tests by testing real numbers manually
@@ -33,9 +34,20 @@ class SimpleSim:
         self.U_minus = U_minus
 
 
+def _make_1d_test_plant() -> Plant:
+    """Create a simple stable 1D plant for controller-unit tests."""
+    A = np.array([[-1.0]])
+    B = np.array([[2.0]])
+    C = np.array([[3.0]])
+    D = np.array([[0.0]])
+    Q = np.array([[0.0]])
+    R = np.array([[0.0]])
+    return Plant(dims=1, A=A, B=B, C=C, D=D, Q=Q, R=R)
+
+
 def test_calc_u_correct():
     sim = SimpleSim(K_p=2.0, K_i=0.0, K_d=0.0)
-    controller = PIDController(sim=sim)
+    controller = PIDController(sim=sim, plant=_make_1d_test_plant())
     # error e = y_sp - y_meas
     e = np.array([[1.0 - 0.4]])
     u = controller.calc_u(e)
@@ -69,16 +81,15 @@ def test_openloop_controller_computes_feedforward():
     # transfer function: G(s) = 6 / (s + 1)
     # steady-state gain: G(0) = 6
     # for a setpoint of y_sp = 5, we need u = 5/6 = 0.833...
-    class Plant:
-        def __init__(self):
-            self.dims = 1
-            self.A = np.array([[-1.0]])
-            self.B = np.array([[2.0]])
-            self.C = np.array([[3.0]])
-            self.D = np.array([[0.0]])
+    A = np.array([[-1.0]])
+    B = np.array([[2.0]])
+    C = np.array([[3.0]])
+    D = np.array([[0.0]])
+    Q = np.array([[0.0]])
+    R = np.array([[0.0]])
 
     sim = SimpleSim(y_sp=5.0)
-    plant = Plant()
+    plant = Plant(dims=1, A=A, B=B, C=C, D=D, Q=Q, R=R)
     controller = OpenLoopController(sim=sim, plant=plant)
     u = controller.calc_u()
     assert isinstance(u, np.ndarray)
@@ -108,7 +119,7 @@ def test_bangbang_controller_on_off_behaviour():
 
 def test_pid_controller_p_i_d_terms_and_memory():
     sim = SimpleSim(K_p=2.0, K_i=1.0, K_d=0.5, dt_anim=0.1)
-    controller = PIDController(sim=sim)
+    controller = PIDController(sim=sim, plant=_make_1d_test_plant())
 
     e = np.array([[1.0]])
     u1 = controller.calc_u(e)
