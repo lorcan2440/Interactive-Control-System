@@ -12,9 +12,9 @@ class SimpleSim:
         self.integrator_method = IntegratorType.EULER_MARUYAMA
         self.use_ode_mode = False
         self.y_sp = np.array([[y_sp]], dtype=float)
-        self.C1_u = 1.0
+        self.H2_C1_u = 1.0
         for i in range(dims):
-            setattr(self, f'C1_x{i + 1}', 1.0)
+            setattr(self, f'H2_C1_x{i + 1}', 1.0)
 
 
 def test_h2_controller_returns_array_and_applies_negative_state_feedback():
@@ -62,12 +62,12 @@ def test_h2_controller_uses_all_plant_states_and_rebuilds_changed_weights():
     assert first_u.shape == (1, 1)
     assert first_gain.shape == (1, 3)
 
-    sim.C1_x2 = 5.0
+    sim.H2_C1_x2 = 5.0
     controller.calc_u(np.array([[1.0]]))
     assert not np.allclose(controller.F, first_gain)
 
     state_weighted_gain = controller.F.copy()
-    sim.C1_u = 2.0
+    sim.H2_C1_u = 2.0
     controller.calc_u(np.array([[1.0]]))
     assert not np.allclose(controller.F, state_weighted_gain)
 

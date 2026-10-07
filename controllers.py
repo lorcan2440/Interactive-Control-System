@@ -387,8 +387,11 @@ class H2Controller:
         R_item = R.item()
 
         # get controller parameters from the GUI
-        C1_x = np.array([float(getattr(self.simulator, f'C1_x{i + 1}', 1.0)) for i in range(dims)]).reshape(1, dims)
-        C1_u = np.array([[float(getattr(self.simulator, 'C1_u', 1.0))]])
+        C1_x = np.array([
+            float(getattr(self.simulator, f'H2_C1_x{i + 1}', 1.0))
+            for i in range(dims)
+        ]).reshape(1, dims)
+        C1_u = np.array([[float(getattr(self.simulator, 'H2_C1_u', 1.0))]])
 
         # create a hashable key for the current design matrices and parameters to avoid unnecessary recomputation
         design_matrices = (A, B, C, D, Q, R, C1_x, C1_u)
@@ -434,7 +437,14 @@ class H2Controller:
         self.H_Kd = K_step[:dims, dims + 1:]
 
         self._design_key_prev = design_key
-        self.logger.debug(f'H2 design updated: C1_x={C1_x}, C1_u={C1_u}, F={self.F}, H={self.H}, observer poles z={np.linalg.eigvals(A_K)}')
+        self.logger.debug(
+            'H2 design updated: H2_C1_x=%s, H2_C1_u=%s, F=%s, H=%s, observer poles z=%s',
+            C1_x,
+            C1_u,
+            self.F,
+            self.H,
+            np.linalg.eigvals(A_K),
+        )
 
     def is_closed_loop_stable_discrete(self) -> tuple[bool, np.ndarray]:
         """Check stability of the sampled plant and H2 controller interconnection."""

@@ -394,7 +394,7 @@ class GUI:
     @staticmethod
     def get_controller_param_config(key: str) -> dict[str, float]:
         if key.startswith('H2_C1_x'):
-            return GUI_SLIDER_CONFIG['H2_C1']
+            return GUI_SLIDER_CONFIG['H2_C1_x']
         if key == 'H2_C1_u':
             return GUI_SLIDER_CONFIG['H2_C1_u']
         if key.startswith('Hinf_C1_x'):
@@ -441,8 +441,8 @@ class GUI:
                 for i in range(self.sim.plant.dims):
                     key = f'H2_C1_x{i + 1}'
                     if not hasattr(self.sim, key):
-                        setattr(self.sim, key, GUI_SLIDER_CONFIG['H2_C1']['init'])
-                    self.add_param(key, key, GUI_SLIDER_CONFIG['H2_C1'])
+                        setattr(self.sim, key, GUI_SLIDER_CONFIG['H2_C1_x']['init'])
+                    self.add_param(key, key, GUI_SLIDER_CONFIG['H2_C1_x'])
                 if not hasattr(self.sim, 'H2_C1_u'):
                     self.sim.H2_C1_u = GUI_SLIDER_CONFIG['H2_C1_u']['init']
                 self.add_param('H2_C1_u', 'H2_C1_u', GUI_SLIDER_CONFIG['H2_C1_u'])
@@ -474,7 +474,11 @@ class GUI:
         if val_label is not None:
             val_label.setText(f"{val:.2f}")
 
-        if key in CONTROLLER_PARAMS_LIST or key.startswith('C1_') or key.startswith('Hinf_C1_'):
+        if (
+            key in CONTROLLER_PARAMS_LIST
+            or key.startswith('H2_C1_')
+            or key.startswith('Hinf_C1_')
+        ):
             setattr(self.sim, key, val)
 
     def set_controller(self, controller_type: ControllerType):
@@ -614,11 +618,11 @@ class GUI:
         self.sim.pid_controller.reset_memory()
         self.sim.h2_controller.reset_memory()
         for i in range(self.sim.plant.dims):
-            key = f'C1_x{i + 1}'
+            key = f'H2_C1_x{i + 1}'
             if not hasattr(self.sim, key):
-                setattr(self.sim, key, GUI_SLIDER_CONFIG['H2_C1']['init'])
-        if not hasattr(self.sim, 'C1_u'):
-            self.sim.C1_u = GUI_SLIDER_CONFIG['H2_C1_u']['init']
+                setattr(self.sim, key, GUI_SLIDER_CONFIG['H2_C1_x']['init'])
+        if not hasattr(self.sim, 'H2_C1_u'):
+            self.sim.H2_C1_u = GUI_SLIDER_CONFIG['H2_C1_u']['init']
         for i in range(self.sim.plant.dims):
             key = f'Hinf_C1_x{i + 1}'
             if not hasattr(self.sim, key):

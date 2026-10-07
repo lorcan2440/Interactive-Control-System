@@ -30,7 +30,7 @@ GUI_SLIDER_CONFIG = {
     'tau':           {'min': 0.0001, 'max': 1.0,     'step': 0.001,  'init': 0.01},
     'u_sat_plus':    {'min': 0.0,    'max': 50.0,    'step': 1.0,    'init': 25.0},
     'u_sat_minus':   {'min': -50.0,  'max': 0.0,     'step': 1.0,    'init': -25.0},
-    'H2_C1':         {'min': -30.0,  'max': 30.0,    'step': 0.5,    'init': 2.0},
+    'H2_C1_x':       {'min': -30.0,  'max': 30.0,    'step': 0.5,    'init': 2.0},
     'H2_C1_u':       {'min': 0.1,    'max': 10.0,    'step': 0.1,    'init': 1.0},
     'Hinf_C1_x':     {'min': -30.0,  'max': 30.0,   'step': 0.5,    'init': 2.0},
     'Hinf_C1_u':     {'min': 0.1,    'max': 10.0,   'step': 0.1,    'init': 1.0},

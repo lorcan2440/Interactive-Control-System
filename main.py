@@ -105,8 +105,8 @@ class Simulation(QWidget):
         for param in CONTROLLER_PARAMS_LIST:
             setattr(self, param, GUI_SLIDER_CONFIG[param]['init'])
         for i in range(self.plant.dims):
-            setattr(self, f'C1_x{i + 1}', GUI_SLIDER_CONFIG['H2_C1']['init'])
-        self.C1_u = GUI_SLIDER_CONFIG['H2_C1_u']['init']
+            setattr(self, f'H2_C1_x{i + 1}', GUI_SLIDER_CONFIG['H2_C1_x']['init'])
+        self.H2_C1_u = GUI_SLIDER_CONFIG['H2_C1_u']['init']
         for i in range(self.plant.dims):
             setattr(self, f'Hinf_C1_x{i + 1}', GUI_SLIDER_CONFIG['Hinf_C1_x']['init'])
         self.Hinf_C1_u = GUI_SLIDER_CONFIG['Hinf_C1_u']['init']
