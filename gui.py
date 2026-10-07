@@ -336,7 +336,7 @@ class GUI:
         line_pid = 'n/a'
 
         if self.sim.controller_type == ControllerType.PID:
-            cl_stable, _ = self.sim.pid_controller.is_closed_loop_stable_continuous()
+            cl_stable, _ = self.sim.pid_controller.is_closed_loop_stable_discrete()
             cl_stable = str(cl_stable)
             K_p, K_i, K_d, tau = self.sim.pid_controller.K_p, self.sim.pid_controller.K_i, self.sim.pid_controller.K_d, self.sim.pid_controller.tau
             line_pid = f'PID params: K_p={K_p:.4f}, K_i={K_i:.4f}, K_d={K_d:.4f}, tau={tau:.4f}'

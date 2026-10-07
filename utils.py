@@ -208,10 +208,9 @@ def get_t_span(t_start: float, t_stop: float, dt: float) -> np.ndarray:
         raise ValueError(f"Time step dt must be > 0 (got {dt})")
 
     t_span = np.arange(t_start, t_stop + dt, dt)
-    if t_span[-1] - t_stop > 0:
-        if np.isclose(t_span[-1], t_stop, atol=EPS):
-            t_span[-1] = t_stop  # snap last point to t_stop if within tolerance
-        else:
-            t_span = t_span[:-1]  # remove last point if it exceeds t_stop
+    if t_span[-1] > t_stop or np.isclose(t_span[-1], t_stop, atol=EPS, rtol=0.0):
+        t_span[-1] = t_stop
+    else:
+        t_span = np.append(t_span, t_stop)
 
     return t_span

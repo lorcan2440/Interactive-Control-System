@@ -1,7 +1,7 @@
 __pycache__
 .pytest_cache
 tests/__pycache__
-outputs
+output
 tempCodeRunnerFile.py
 debug.log
 Recording *.mp4

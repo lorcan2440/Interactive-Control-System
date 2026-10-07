@@ -6,6 +6,7 @@ import numpy as np
 from scipy.linalg import expm
 
 # local imports
+from integrators import IntegratorType
 from utils import get_logger
 
 
@@ -274,80 +275,87 @@ class PIDController:
             [-G_d + L * K_y * G_d, -1 + L * K_y, 1 + L * K_sp]
         ])
     
-    def is_closed_loop_stable_continuous(self) -> tuple[bool, np.ndarray]:
-        """
-        Return whether the closed loop is asymptotically stable, based on the continuous-time 
-        closed-loop state transition matrix A_cl.
+    def is_closed_loop_stable_discrete(self) -> tuple[bool, np.ndarray]:
+        """Check asymptotic stability of the sampled PID loop used by the simulator.
 
-        This function checks if the eigenvalues of the closed-loop state transition 
-        matrix A_cl must have Re s < 0. The matrix A_cl is obtained by:
-
-        - finding the state space realisation of the controller K(s) in continuous time
-        - augmenting the plant state space with the controller state space
-        - computing the closed-loop state transition matrix A_cl for the augmented system
+        The closed-loop state is ``[x_plant, x_controller, u_previous]``.
+        Its poles are discrete-time eigenvalues, so the loop is stable exactly
+        when every pole has magnitude less than one.
         """
 
-        # get plant matrices (continuous time)
-        A = self.plant.A  # shape: (dims, dims)
-        B = self.plant.B  # shape: (dims, 1)
-        C = self.plant.C  # shape: (1, dims)
-        D = self.plant.D  # shape: (1, 1)
+        # get the plant matrices
+        A, B, C, D = self.plant.A, self.plant.B, self.plant.C, self.plant.D
 
-        # get controller parameters
-        K_p = self.K_p
-        K_i = self.K_i
-        K_d = self.K_d
-        tau = self.tau
+        # get PID controller params
+        K_p, K_i, K_d, tau = float(self.sim.K_p), float(self.sim.K_i), float(self.sim.K_d), float(self.sim.tau)
+        dt_anim = float(self.sim.dt_anim)
+        if tau <= 0:
+            raise ValueError(f'PID derivative filter time constant must be > 0 (got {tau}).')
 
-        # controller: K(s) = K_p + K_i / s + K_d * s / (tau * s + 1)
-        # state space realisation of the PID controller (in controllable canonical form):
-        A_K = np.array([[0, 1], [0, -1 / tau]])  # shape: (2, 2)
-        B_K = np.array([[0], [1]])  # shape: (2, 1)
-        C_K = np.array([[-K_i / tau, -(K_i + K_d / tau ** 2)]])  # shape: (1, 2)
-        D_K = np.array([[K_d / tau - K_p]])  # shape: (1, 1)
+        integration_method = self.sim.integrator_method
+        use_ode_mode = self.sim.use_ode_mode
 
-        # check for ill-posed algebraic loop (D_K @ D = 1)
-        M = 1 - D_K @ D
-        if np.isclose(M, 0.0):
-            raise ValueError(f'Ill-posed algebraic loop: 1 - D_K @ D = {M} ≈ 0.')
+        # augment the continuous plant with a constant input state:
+        # d/dt [x, u] = [[A, B], [0, 0]] @ [x, u].
+        A_aug = np.block([[A, B], [np.zeros((1, A.shape[1] + 1))]])
+        A_aug_step = np.eye(A_aug.shape[0])
+        integration_steps = np.diff(self.plant.t_span_0)
 
-        # closed-loop state transition matrix
+        if use_ode_mode and integration_method not in (IntegratorType.RK4, IntegratorType.ANALYTIC_ODE):
+            raise ValueError(f'Invalid integration method for ODE mode: {integration_method}.')
+        if not use_ode_mode and integration_method not in (IntegratorType.EULER_MARUYAMA, IntegratorType.ANALYTIC_SDE):
+            raise ValueError(f'Invalid integration method for SDE mode: {integration_method}.')
+
+        if integration_method in (IntegratorType.ANALYTIC_ODE, IntegratorType.ANALYTIC_SDE):
+            A_aug_step = expm(A_aug * float(np.sum(integration_steps)))
+        else:
+            I_aug = np.eye(A_aug.shape[0])
+            for step in integration_steps:
+                A_step_scaled = A_aug * step
+                if integration_method is IntegratorType.EULER_MARUYAMA:
+                    A_plant_substep_augmented = I_aug + A_step_scaled
+                else:
+                    A_plant_step_squared = A_step_scaled @ A_step_scaled
+                    A_plant_step_cubed = A_plant_step_squared @ A_step_scaled
+                    # use a 4th-order Taylor series expansion of the matrix exponential for RK4 integration.
+                    A_plant_substep_augmented = (
+                        I_aug + A_step_scaled
+                        + A_plant_step_squared / 2
+                        + A_plant_step_cubed / 6
+                        + (A_plant_step_cubed @ A_step_scaled) / 24
+                    )
+                A_aug_step = A_plant_substep_augmented @ A_aug_step
+
+        # get discrete-time plant matrices
+        A_d = A_aug_step[:-1, :-1]
+        B_d = A_aug_step[:-1, -1:]
+
+        # get discrete-time state space realisation of the PID controller
+        # controller state: [integral_error, previous_measurement, derivative_output]
+        alpha = max(min(1.0 - dt_anim / tau, 1.0), 0.0)
+        A_Kd = np.zeros((3, 3))
+        B_Kd = np.array([[0.0], [1.0], [0.0]])
+        if K_i != 0:
+            A_Kd[0, 0] = 1.0
+            B_Kd[0, 0] = -dt_anim
+        if K_d != 0:
+            A_Kd[2, 1:] = [K_d / tau, alpha]
+            B_Kd[2, 0] = -K_d / tau
+        C_Kd = np.array([[K_i, K_d / tau, alpha]])
+        D_Kd = np.array([[-K_p - K_i * dt_anim - K_d / tau,]])
+
+        # get closed-loop discrete-time state space A-matrix
         A_cl = np.block([
-            [A + B @ C * (D_K / M),  B @ C_K / M],
-            [B_K @ C / M,            A_K + (D / M) * B_K @ C_K]
+            [A_d + B_d @ D_Kd @ C, B_d @ C_Kd, B_d @ D_Kd @ D],
+            [B_Kd @ C, A_Kd, B_Kd @ D],
+            [D_Kd @ C, C_Kd, D_Kd @ D]
         ])
 
-        # check eigenvalues of A_cl
-        eigvals = np.linalg.eigvals(A_cl)
+        # check whether all eigenvalues of A_cl lie within the unit circle (discrete-time stability condition)
+        poles = np.linalg.eigvals(A_cl)
+        stable = bool(np.all(np.abs(poles) < 1.0))
 
-        return np.all(np.real(eigvals) < 0), eigvals
-    
-    def is_closed_loop_stable_discrete(self) -> tuple[bool, np.ndarray]:
-        """
-        Return whether the closed loop is asymptotically stable, based on the discrete-time 
-        closed-loop state transition matrix A_d_cl.
-
-        This function checks if the eigenvalues of the discretised closed-loop state transition 
-        matrix A_d_cl must have |z| < 1.
-        """
-
-        # NOTE: this works, but only for proportional control with D = 0
-        # TODO: generalise to allowing D != 0
-        # TODO: generalise to K_i, K_d != 0, including the effect of tau
-
-        # get plant matrices
-        C = self.plant.C  # shape: (1, dims)
-
-        # get discrete-time matrices
-        A_d, B_d = self.plant.A_d, self.plant.B_d  # shapes: (dims, dims), (dims, 1)
-
-        # when the loop is closed: u_k = K_p * (y_sp - C x_k), so
-        # x_{k+1} = A_cl x_k + B_d @ K_p * y_sp, where A_cl = A_d - B_d @ K_p @ C
-        A_cl = A_d - B_d @ (self.sim.K_p * C)  # closed-loop state transition matrix
-
-        # all discrete-time poles z must have |z| < 1
-        z_poles = np.linalg.eigvals(A_cl)
-        return np.all(np.abs(z_poles) < 1.0), z_poles
+        return stable, poles
 
 # TODO: implement the H2 optimal controller from first principles - 
 # do not just copy the below blindly as it gave suspicious results previously
