@@ -3,11 +3,12 @@ from enum import Enum, auto
 
 # external imports
 import numpy as np
-from scipy.linalg import expm
+from scipy.linalg import block_diag, expm
+from scipy.linalg import solve_continuous_are
 
 # local imports
 from integrators import IntegratorType
-from utils import get_logger
+from utils import get_logger, EPS, get_t_span
 
 
 class ControllerType(Enum):
@@ -17,6 +18,8 @@ class ControllerType(Enum):
     OPENLOOP = auto()
     BANGBANG = auto()
     PID = auto()
+    H2 = auto()
+    HINF = auto()
     
     def __str__(self):
         """Return the string representation for display purposes"""
@@ -169,16 +172,14 @@ class PIDController:
             raise ValueError("e must have shape (1, 1)")
         
         # check closed-loop stability
-        """
-        cl_stable, cl_s_poles = self.is_closed_loop_stable()
+        cl_stable, cl_z_poles = self.is_closed_loop_stable_discrete()
         if not cl_stable and self.cl_stable_prev:  # only log one warning
             self.logger.warning(f'''Closed-loop unstable for current PID parameters: 
-                eigenvalues of A_cl (poles in s-plane) are {cl_s_poles}. Prev: {self.cl_stable_prev}''')
+                eigenvalues of A_cl (poles in z-plane) are {cl_z_poles}. Prev: {self.cl_stable_prev}''')
         elif cl_stable:
             self.cl_stable_prev = True
         else:
             self.cl_stable_prev = False
-        """
 
         # get measurement
         y_meas = self.sim.y_sp - e
@@ -357,170 +358,458 @@ class PIDController:
 
         return stable, poles
 
-# TODO: implement the H2 optimal controller from first principles - 
-# do not just copy the below blindly as it gave suspicious results previously
-# allow the user to choose the performance output z = C1 @ x + C2 @ u (user sets weight matrices C1 and C2)
-# also add a function to compute the optimal H2 norm
 
-# TODO: implement the H-infinity optimal controller from first principles -
-# choose to use either the Riccati equation approach or the linear matrix inequality optimisation (solving with CVX),
-# could add a GUI setting to choose which approach to use
-# allow the user to choose the performance output z = C1 @ x + C2 @ u (user sets weight matrices C1 and C2)
-# also add a function to compute the optimal H-infinity norm
+
+class H2Controller:
+    """Continuous-time LQG controller with state cost ``(C1 @ x)**2``."""
+
+    def __init__(self, simulator, plant):
+        self.simulator = simulator
+        self.plant = plant
+        self.logger = get_logger()
+        self._design_key_prev = None
+        self.cl_stable_prev = True
+        self.reset_memory()
+
+    def reset_memory(self):
+        """Reset the estimated state to the plant's current state."""
+        self.x_hat = self.plant.x.copy()
+        self._has_previous_sample = False
+
+    def update_controller_matrices(self):
+        """Update the H2 controller state space matrices if the plant or controller parameters have changed."""
+
+        # get the plant state space matrices
+        dims = self.plant.dims
+        A, B, C, D = self.plant.A, self.plant.B, self.plant.C, self.plant.D
+        Q = self.plant.Q
+        R = np.maximum(self.plant.R, np.array([[EPS]]))  # minimum measurement noise variance to avoid singularity
+        R_item = R.item()
+
+        # get controller parameters from the GUI
+        C1_x = np.array([float(getattr(self.simulator, f'C1_x{i + 1}', 1.0)) for i in range(dims)]).reshape(1, dims)
+        C1_u = np.array([[float(getattr(self.simulator, 'C1_u', 1.0))]])
+
+        # create a hashable key for the current design matrices and parameters to avoid unnecessary recomputation
+        design_matrices = (A, B, C, D, Q, R, C1_x, C1_u)
+        design_key = (self.simulator.dt_anim, *((matrix.shape, matrix.dtype.str, matrix.tobytes()) for matrix in design_matrices),)
+
+        if design_key == self._design_key_prev:
+            return
+
+        C1_x_squared = C1_x.T @ C1_x
+        C1_u_squared = C1_u.T @ C1_u
+        try:
+            # solve the continuous algebraic Riccati equation (CARE) for the state cost X
+            X = solve_continuous_are(A, B, C1_x_squared, C1_u_squared)
+            self.F = B.T @ X
+
+            # solve the filter algebraic Riccati equation (FARE) for the measurement cost Y
+            Y = solve_continuous_are(A.T, C.T, Q, R)
+        except (ValueError, np.linalg.LinAlgError) as error:
+            self.logger.exception('Unable to solve H2/LQG Riccati equations.')
+            raise ValueError(
+                'H2 controller design failed; check that the plant is stabilisable '
+                'and detectable and that its noise matrices are valid.'
+            ) from error
+
+        self.H = Y @ C.T / R_item
+
+        # exact sampled transition for the continuous-time observer driven by
+        # held plant input and the most recent measured output.
+        A_K = A - self.H @ C
+        B_K = B - self.H @ D
+
+        # compute the discrete-time observer matrices by augmenting the observer with a constant input state
+        K_aug = np.zeros((dims + 2, dims + 2))
+        K_aug[:dims, :dims] = A_K
+        K_aug[:dims, dims:dims + 1] = B_K
+        K_aug[:dims, dims + 1:] = self.H
+
+        # compute the exact discrete-time transition matrix for the augmented observer
+        # and get the discrete-time observer matrices from it
+        K_step = expm(K_aug * self.simulator.dt_anim)
+        self.A_Kd = K_step[:dims, :dims]
+        self.B_Kd = K_step[:dims, dims:dims + 1]
+        self.H_Kd = K_step[:dims, dims + 1:]
+
+        self._design_key_prev = design_key
+        self.logger.debug(f'H2 design updated: C1_x={C1_x}, C1_u={C1_u}, F={self.F}, H={self.H}, observer poles z={np.linalg.eigvals(A_K)}')
+
+    def is_closed_loop_stable_discrete(self) -> tuple[bool, np.ndarray]:
+        """Check stability of the sampled plant and H2 controller interconnection."""
+        A, B = self.plant.A, self.plant.B
+        C, D = self.plant.C, self.plant.D
+        dims = self.plant.dims
+        dt_anim = float(self.simulator.dt_anim)
+        integration_method = self.simulator.integrator_method
+        use_ode_mode = self.simulator.use_ode_mode
+
+        if use_ode_mode and integration_method not in (IntegratorType.RK4, IntegratorType.ANALYTIC_ODE):
+            raise ValueError(f'Invalid integration method for ODE mode: {integration_method}.')
+        if not use_ode_mode and integration_method not in (IntegratorType.EULER_MARUYAMA, IntegratorType.ANALYTIC_SDE):
+            raise ValueError(f'Invalid integration method for SDE mode: {integration_method}.')
+
+        # discretise the deterministic plant dynamics using the same method and
+        # substeps as the simulator; noise does not affect asymptotic stability
+        A_aug = np.block([[A, B], [np.zeros((1, dims + 1))]])
+        I_aug = np.eye(dims + 1)
+        A_aug_step = I_aug.copy()
+        integration_steps = np.diff(get_t_span(0.0, dt_anim, self.plant.dt_int))
+
+        if integration_method in (IntegratorType.ANALYTIC_ODE, IntegratorType.ANALYTIC_SDE):
+            A_aug_step = expm(A_aug * dt_anim)
+        else:
+            for step in integration_steps:
+                A_step_scaled = A_aug * step
+                if integration_method is IntegratorType.EULER_MARUYAMA:
+                    A_plant_step = I_aug + A_step_scaled
+                else:
+                    A_step_squared = A_step_scaled @ A_step_scaled
+                    A_step_cubed = A_step_squared @ A_step_scaled
+                    A_plant_step = (
+                        I_aug + A_step_scaled
+                        + A_step_squared / 2
+                        + A_step_cubed / 6
+                        + (A_step_cubed @ A_step_scaled) / 24
+                    )
+                A_aug_step = A_plant_step @ A_aug_step
+
+        A_d = A_aug_step[:dims, :dims]
+        B_d = A_aug_step[:dims, dims:]
+
+        # State is [x_plant, x_hat_previous, u_previous]. The observer first
+        # estimates state from the current output; state feedback then sets the
+        # input held over the next plant frame.
+        observer_input = self.B_Kd + self.H_Kd @ D
+        A_cl = np.block([
+            [A_d - B_d @ self.F @ self.H_Kd @ C,
+             -B_d @ self.F @ self.A_Kd,
+             -B_d @ self.F @ observer_input],
+            [self.H_Kd @ C, self.A_Kd, observer_input],
+            [-self.F @ self.H_Kd @ C,
+             -self.F @ self.A_Kd,
+             -self.F @ observer_input],
+        ])
+
+        poles = np.linalg.eigvals(A_cl)
+        stable = bool(np.all(np.abs(poles) < 1.0))
+        return stable, poles
+
+    def calc_u(self, e: np.ndarray) -> np.ndarray:
+        """Calculate a setpoint-tracking control input with shape ``(1, 1)``."""
+        if not isinstance(e, np.ndarray) or e.shape != (1, 1):
+            raise ValueError('e must have shape (1, 1)')
+
+        self.update_controller_matrices()
+        cl_stable, cl_z_poles = self.is_closed_loop_stable_discrete()
+        if not cl_stable and self.cl_stable_prev:
+            self.logger.warning(
+                'Closed-loop unstable for current H2 parameters: '
+                'eigenvalues of A_cl (poles in z-plane) are %s.',
+                cl_z_poles,
+            )
+        self.cl_stable_prev = cl_stable
+
+        A, B, C, D = self.plant.A, self.plant.B, self.plant.C, self.plant.D
+        dims = self.plant.dims
+        if self.x_hat.shape != (dims, 1):
+            self.reset_memory()
+
+        # solve to get the equilibrium state and input for the current setpoint
+        # (x_ss and u_ss such that C @ x_ss + D @ u_ss = y_sp and A @ x_ss + B @ u_ss = 0)
+        A_eq = np.block([[A, B], [C, D]])
+        b_eq = np.vstack([np.zeros((dims, 1)), self.simulator.y_sp])
+        try:
+            x_u_ss = np.linalg.solve(A_eq, b_eq)
+        except np.linalg.LinAlgError as error:
+            self.logger.error('H2 controller cannot track the setpoint: equilibrium matrix is singular.')
+            raise ValueError('H2 controller cannot track this setpoint because the plant has no unique steady-state solution.') from error
+        x_ss, u_ss = x_u_ss[:dims], x_u_ss[dims:]
+
+        # observer update: estimate x based on the previous x_hat, held u, and current y_meas
+        y_meas = self.simulator.y_sp - e  # reconstruct current measurement
+        if self._has_previous_sample:
+            self.x_hat = self.A_Kd @ self.x_hat + self.B_Kd @ self.plant.u + self.H_Kd @ y_meas
+        else:
+            self._has_previous_sample = True
+
+        # compute u based on x_hat, shifted by the steady-state values (controller is a regulator: drives delta_x and delta_u to zero)
+        delta_x = self.x_hat - x_ss
+        delta_u = -self.F @ delta_x
+        u = u_ss + delta_u
+        return u
+
+
+class HInfinityController:
+    """Continuous-time output-feedback H-infinity controller.
+
+    The performance output is the stack ``[C1_x @ x, C1_u * u]``. The
+    CARE/FARE design finds the smallest feasible gamma by bisection.
+    """
+
+    def __init__(self, simulator, plant):
+        self.simulator = simulator
+        self.plant = plant
+        self.logger = get_logger()
+        self._design_key = None
+        self.cl_stable_prev = True
+        self.reset_memory()
+
+    def reset_memory(self):
+        """Reset the dynamic controller state."""
+        self.x_controller = np.zeros((self.plant.dims, 1))
+
+    def _get_design_data(self):
+        dims = self.plant.dims
+        A, B, C, D = self.plant.A, self.plant.B, self.plant.C, self.plant.D
+        C1_x = np.array([
+            float(getattr(self.simulator, f'Hinf_C1_x{i + 1}', 1.0))
+            for i in range(dims)
+        ]).reshape(1, dims)
+        C1_u = float(getattr(self.simulator, 'Hinf_C1_u', 1.0))
+        if C1_u <= 0.0:
+            raise ValueError('H-infinity input weight Hinf_C1_u must be greater than zero.')
+
+        process_noise, measurement_noise = self.plant.Q, max(float(self.plant.R[0, 0]), EPS)
+        noise_eigenvalues, noise_eigenvectors = np.linalg.eigh(process_noise)
+        B1 = noise_eigenvectors @ np.diag(np.sqrt(np.maximum(noise_eigenvalues, 0.0)))
+        return A, B, C, D, C1_x, C1_u, B1, measurement_noise
+
+    def check_stabilisability_and_detectability(self):
+        """Check continuous-time stabilisability and detectability using PBH tests."""
+        A, B, C = self.plant.A, self.plant.B, self.plant.C
+        state_count = A.shape[0]
+        tolerance = 1e-9 * max(1.0, np.linalg.norm(A, ord=2))
+        unstable_modes = [
+            eigenvalue for eigenvalue in np.linalg.eigvals(A)
+            if eigenvalue.real >= -tolerance
+        ]
+
+        uncontrollable_modes = []
+        unobservable_modes = []
+        for eigenvalue in unstable_modes:
+            controllability_pbh = np.hstack([
+                eigenvalue * np.eye(state_count) - A, B
+            ])
+            observability_pbh = np.vstack([
+                eigenvalue * np.eye(state_count) - A, C
+            ])
+            if np.linalg.matrix_rank(controllability_pbh, tol=tolerance) < state_count:
+                uncontrollable_modes.append(eigenvalue)
+            if np.linalg.matrix_rank(observability_pbh, tol=tolerance) < state_count:
+                unobservable_modes.append(eigenvalue)
+
+        is_stabilizable = not uncontrollable_modes
+        is_detectable = not unobservable_modes
+        self.logger.debug(
+            'H-infinity plant tests: stabilizable=%s, detectable=%s, '
+            'uncontrollable unstable modes=%s, unobservable unstable modes=%s',
+            is_stabilizable,
+            is_detectable,
+            uncontrollable_modes,
+            unobservable_modes,
+        )
+        return is_stabilizable, is_detectable
+
+    def find_care_design(self, A, B, C, C1_x, C1_u, B1, measurement_noise):
+        """Solve the coupled CARE/FARE conditions and bisect for minimum gamma."""
+        process_covariance = B1 @ B1.T
+        input_cost = C1_u ** 2
+        state_cost = C1_x.T @ C1_x
+
+        def design_at_gamma(gamma):
+            try:
+                # The indefinite CARE preserves rank-deficient disturbance and
+                # control matrices, unlike Cholesky factorization of their difference.
+                control_riccati_inputs = np.hstack([B1, B])
+                control_riccati_weights = block_diag(
+                    -gamma ** 2 * np.eye(B1.shape[1]),
+                    input_cost * np.eye(B.shape[1]),
+                )
+                X = solve_continuous_are(
+                    A,
+                    control_riccati_inputs,
+                    state_cost,
+                    control_riccati_weights,
+                )
+                F = B.T @ X / input_cost
+
+                A_hat = A + process_covariance @ X / gamma ** 2
+                filter_riccati_inputs = np.hstack([C.T, F.T])
+                filter_riccati_weights = block_diag(
+                    measurement_noise * np.eye(C.shape[0]),
+                    -gamma ** 2 / input_cost * np.eye(F.shape[0]),
+                )
+                Y = solve_continuous_are(
+                    A_hat.T,
+                    filter_riccati_inputs,
+                    process_covariance,
+                    filter_riccati_weights,
+                )
+                if np.max(np.abs(np.linalg.eigvals(X @ Y))) >= gamma ** 2:
+                    return None
+                H = Y @ C.T / measurement_noise
+                A_controller = A_hat - B @ F - H @ C
+                B_controller = -H
+                C_controller = F
+                D_controller = np.zeros((1, 1))
+                return X, Y, F, H, A_controller, B_controller, C_controller, D_controller
+            except (ValueError, np.linalg.LinAlgError):
+                return None
+
+        gamma_high = 1.0
+        design_high = design_at_gamma(gamma_high)
+        while design_high is None and gamma_high < 1e8:
+            gamma_high *= 2.0
+            design_high = design_at_gamma(gamma_high)
+        if design_high is None:
+            raise ValueError(
+                'CARE/FARE H-infinity design failed to find a feasible gamma; '
+                'check plant stabilisability and detectability.'
+            )
+
+        gamma_low = 0.0
+        for _ in range(45):
+            gamma_mid = (gamma_low + gamma_high) / 2.0
+            design_mid = design_at_gamma(gamma_mid)
+            if design_mid is None:
+                gamma_low = gamma_mid
+            else:
+                gamma_high, design_high = gamma_mid, design_mid
+        return gamma_high, design_high
+
+    def update_controller_matrices(self):
+        """Design and cache the controller using the CARE/FARE method."""
+        A, B, C, D, C1_x, C1_u, B1, measurement_noise = self._get_design_data()
+        design_matrices = (A, B, C, D, self.plant.Q, self.plant.R, C1_x)
+        design_key = (
+            C1_u,
+            self.simulator.dt_anim,
+            *((matrix.shape, matrix.dtype.str, matrix.tobytes()) for matrix in design_matrices),
+        )
+        if design_key == self._design_key:
+            return
+        if not np.allclose(D, 0.0):
+            raise ValueError(
+                'H-infinity synthesis currently requires D=0, matching the generalized plant '
+                'used by the CARE/FARE formulas.'
+            )
+        is_stabilisable, is_detectable = self.check_stabilisability_and_detectability()
+        if not is_stabilisable or not is_detectable:
+            raise ValueError(
+                'H-infinity synthesis requires a stabilisable and detectable plant. '
+                f'Stabilisable={is_stabilisable}, detectable={is_detectable}; '
+                'see the debug log for the unstable or marginal modes that failed the PBH tests.'
+            )
+
+        gamma, design = self.find_care_design(
+            A, B, C, C1_x, C1_u, B1, measurement_noise
+        )
+
+        (
+            self.X, self.Y, self.F, self.H,
+            self.A_K, self.B_K, self.C_K, self.D_K,
+        ) = design
+        self.gamma = gamma
+
+        # Exact sampled transition of the continuous controller for a held
+        # measured-output deviation.
+        controller_augmented = np.zeros((A.shape[0] + 1, A.shape[0] + 1))
+        controller_augmented[:-1, :-1] = self.A_K
+        controller_augmented[:-1, -1:] = self.B_K
+        controller_step = expm(controller_augmented * self.simulator.dt_anim)
+        self.A_Kd = controller_step[:-1, :-1]
+        self.B_Kd = controller_step[:-1, -1:]
+        self._design_key = design_key
+        self.logger.info(
+            'H-infinity controller designed using CARE/FARE: gamma=%g, C1_x=%s, C1_u=%g',
+            gamma,
+            C1_x,
+            C1_u,
+        )
+        self.logger.debug(
+            'H-infinity controller matrices: F=%s, H=%s, A_K=%s, B_K=%s, C_K=%s, D_K=%s',
+            self.F,
+            self.H,
+            self.A_K,
+            self.B_K,
+            self.C_K,
+            self.D_K,
+        )
+
+    def is_closed_loop_stable_discrete(self) -> tuple[bool, np.ndarray]:
+        """Check poles of the sampled plant/controller loop."""
+        A, B, C, D = self.plant.A, self.plant.B, self.plant.C, self.plant.D
+        dims = self.plant.dims
+        A_aug = np.block([[A, B], [np.zeros((1, dims + 1))]])
+        I_aug = np.eye(dims + 1)
+        A_aug_step = I_aug.copy()
+        integration_steps = np.diff(get_t_span(
+            0.0, self.simulator.dt_anim, self.plant.dt_int
+        ))
+        method = self.simulator.integrator_method
+        if method in (IntegratorType.ANALYTIC_ODE, IntegratorType.ANALYTIC_SDE):
+            A_aug_step = expm(A_aug * self.simulator.dt_anim)
+        else:
+            for step in integration_steps:
+                scaled_A = A_aug * step
+                if method is IntegratorType.EULER_MARUYAMA:
+                    step_matrix = I_aug + scaled_A
+                else:
+                    A2 = scaled_A @ scaled_A
+                    A3 = A2 @ scaled_A
+                    step_matrix = I_aug + scaled_A + A2 / 2 + A3 / 6 + (A3 @ scaled_A) / 24
+                A_aug_step = step_matrix @ A_aug_step
+
+        A_d, B_d = A_aug_step[:dims, :dims], A_aug_step[:dims, dims:]
+        current_output_gain = self.C_K @ self.B_Kd + self.D_K
+        A_cl = np.block([
+            [A_d + B_d @ current_output_gain @ C,
+             B_d @ self.C_K @ self.A_Kd,
+             B_d @ current_output_gain @ D],
+            [self.B_Kd @ C, self.A_Kd, self.B_Kd @ D],
+            [current_output_gain @ C,
+             self.C_K @ self.A_Kd,
+             current_output_gain @ D],
+        ])
+        poles = np.linalg.eigvals(A_cl)
+        return bool(np.all(np.abs(poles) < 1.0)), poles
+
+    def calc_u(self, e: np.ndarray) -> np.ndarray:
+        """Calculate the H-infinity control input for the current setpoint."""
+        if not isinstance(e, np.ndarray) or e.shape != (1, 1):
+            raise ValueError('e must have shape (1, 1)')
+        self.update_controller_matrices()
+
+        stable, poles = self.is_closed_loop_stable_discrete()
+        if not stable and self.cl_stable_prev:
+            self.logger.warning(
+                'Closed-loop unstable for current H-infinity parameters; z-plane poles: %s',
+                poles,
+            )
+        self.cl_stable_prev = stable
+
+        A, B, C, D = self.plant.A, self.plant.B, self.plant.C, self.plant.D
+        dims = self.plant.dims
+        equilibrium_matrix = np.block([[A, B], [C, D]])
+        equilibrium_rhs = np.vstack([np.zeros((dims, 1)), self.simulator.y_sp])
+        try:
+            equilibrium = np.linalg.solve(equilibrium_matrix, equilibrium_rhs)
+        except np.linalg.LinAlgError as error:
+            raise ValueError(
+                'H-infinity controller cannot track this setpoint because the plant has no '
+                'unique steady-state solution.'
+            ) from error
+        u_ss = equilibrium[dims:]
+
+        y_deviation = -e
+        if self.x_controller.shape != (dims, 1):
+            self.reset_memory()
+        self.x_controller = self.A_Kd @ self.x_controller + self.B_Kd @ y_deviation
+        u_deviation = self.C_K @ self.x_controller + self.D_K @ y_deviation
+        return u_ss + u_deviation
+
 
 # TODO: implement a model predictive controller (MPC), using OSQP to solve the quadratic program
 # allow the user to change the model matrices (may differ from actual plant), cost function weights and horizon length
-
-"""
-# NOTE: this still uses the old interface - need to update - leave out for now
-
-class H2Controller:
-
-    # TODO: investigate H2 controller stability - why does the controller diverge for large C1_1?
-
-    def __init__(self, simulator, plant):
-        '''
-        A H2 controller, also known as an LQG controller, is a type of optimal controller. 
-        It aims to minimise the total signal energy gain of an input disturbance w 
-        to the performance output signal z. The performance output is given by:
-
-        `z = [C1 @ x, u].T`
-
-        where `C1` is the performance gain vector, `x` is the plant state and `u` is the control input.
-
-        In this simulation, since `x` has 2 variables, `C1` is a vector of two values: `C1_1` and `C1_2`, 
-        which are the free parameters for this controler.
-
-        The quantity being minimised is the H2 norm of the lower linear fractional transformation (LFT) of 
-        the generalised plant:
-
-        - The 'generalised plant' is a remodelled form of the plant where the inputs are the control input u 
-        and disturbances w, and the outputs are the measured output y and the performance output z.
-        - The 'lower LFT' T(jω) is the transfer function (TF) from w to z in the generalised plant.
-        - The 'H2 norm' of a TF can be defined in either the (1) frequency or (2) time domains,
-
-        1. ||T(s)||_2 = sqrt{integral from -∞ to ∞: T(jω)* T(jω) dω }
-        2. sqrt{1/(2 pi) * integral from 0 to ∞: z(t)* z(t) dt }
-
-        (where z(t) is the performance output to an impulse disturbance) which are equivalent due to 
-        Parseval's theorem of energy conservation.
-
-        - A larger C1_1 tends to promote minimising the effect of disturbances on x_1.
-        - A larger C1_2 tends to promote minimising the effect of disturbances on x_2 (and hence y).
-        - If C1_1 and C1_2 are both small, this promotes minimising the control input energy ||u||_2.
-        '''
-
-        self.simulator = simulator
-        self.plant = plant
-        self.h2_gains_computed = False
-        self.last_C1 = None
-        self.x_k = np.array([[0.0], [0.0]])  # [x1_hat, x2_hat].T
-
-    def reset_memory(self):
-        self.x_k = 0.0
-        self.prev_x_ss = 0.0
-        self.prev_u_ss = 0.0
-
-    def check_for_observability(self, A: np.ndarray, C: np.ndarray) -> bool:
-        '''
-        Check that the pair (A, C1) is observable, required for the ARE solution and controller stability.
-        '''
-
-        # compute observability Gramian
-        W_o = solve_continuous_lyapunov(A.T, -C.T @ C)
-
-        # check if singular
-        return (np.linalg.matrix_rank(W_o) == W_o.shape[0] and W_o.shape[0] == W_o.shape[1])
-
-    def calc_u(self, e: float) -> float:
-        '''
-        Calculates the control input for a H2 optimal controller (aka LQG controller).
-        
-        ### Arguments
-        - `e` (float): the error, given by y_setpoint - y_measured.
-        
-        ### Returns
-        - `float`: the control input.
-        '''
-
-        # store as 1-element arrays
-        y_measured = np.array([[self.simulator.setpoint - e]])
-        e = np.array([[e]])
-
-        # check if we need to recompute performance output vector (C1 may have changed)
-        current_C1 = (self.simulator.C1_1, self.simulator.C1_2)
-        
-        if not self.h2_gains_computed or self.last_C1 != current_C1:
-            
-            # set up state space matrices
-            A = np.array([[-self.plant.k12 - self.plant.d, self.plant.k21], 
-                          [self.plant.k12, -self.plant.k21 - self.plant.d]])
-            B1 = np.array([[0], [1]])
-            B2 = np.array([[1], [0]])
-            C2 = np.array([[0, 1]])
-
-            # performance output matrix
-            C1 = np.array([[self.simulator.C1_1, self.simulator.C1_2]])
-
-            # solve algebraic Riccati equations (AREs)
-            X = solve_continuous_are(A, B2, C1.T @ C1, np.eye(1))  # CARE (control ARE)
-            Y = solve_continuous_are(A.T, C2.T, B1 @ B1.T, np.eye(1))  # FARE (filter ARE)
-
-            # controller gains
-            self.F = B2.T @ X    # state feedback gain
-            self.H = Y @ C2.T    # Kalman gain
-            self.A_cl = A + B2 @ self.F - self.H @ C2  # closed-loop observer matrix
-            
-            # cache system matrices for steady-state calculation
-            self.A_matrix = A
-            self.B2_matrix = B2
-            self.C2_matrix = C2
-            
-            self.h2_gains_computed = True
-            self.last_C1 = current_C1  # cache performance vector
-
-            # optimal H2 norm - NOTE: MATLAB omits the sqrt(2 * pi) factor
-            self.h2_norm = np.sqrt(2 * np.pi * (np.trace(B1.T @ X @ B1) + np.trace(self.F @ Y @ self.F.T)))
-
-            # check for stability based on C1 variation
-            if not self.check_for_observability(A, C1):
-                warnings.warn(f'UNSTABLE at C1 = {self.C1}: observability Gramian is singular.', RuntimeWarning)
-
-        # recalculate steady-state values at each call (setpoint may have changed)
-        # compute the steady-state control input and state for the current setpoint
-        # we want C2 @ x_ss = setpoint and A @ x_ss + B2 @ u_ss = 0
-        M = np.vstack([
-            np.hstack([self.A_matrix, self.B2_matrix]),
-            np.hstack([self.C2_matrix, np.zeros((1, 1))])
-        ])
-        rhs = np.vstack([np.zeros((2, 1)), np.array([[self.simulator.setpoint]])])
-        
-        try:
-            solution = np.linalg.solve(M, rhs)
-            x_ss = solution[:2]  # state at steady state
-            u_ss = solution[2:]  # control input at steady state
-        except np.linalg.LinAlgError:
-            # fallback if the system is singular
-            if hasattr(self, 'prev_x_ss'):  # use cache
-                x_ss = self.prev_x_ss
-                u_ss = self.prev_u_ss
-            else:  # set to zero (assume regulation)
-                x_ss = np.zeros((2, 1))
-                u_ss = np.zeros((1, 1))
-        
-        # cache steady state values
-        self.prev_x_ss = x_ss
-        self.prev_u_ss = u_ss
-
-        # observer dynamics - track error from steady state
-        # x_k: estimate of plant state vector x
-        dx_k = self.A_cl @ (self.x_k - x_ss) - self.H @ e
-        self.x_k += dx_k * self.simulator.solver_dt  # Euler's method (simple)
-        
-        # control input: u = F @ x (offset by steady-state values)
-        u = u_ss + self.F @ (self.x_k - x_ss)
-        u = float(u[0][0])  # convert back to scalar
-
-        self.simulator.last_u = u
-        return u
-"""

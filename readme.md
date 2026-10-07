@@ -8,6 +8,8 @@ https://github.com/user-attachments/assets/4b876526-36ec-4d46-a481-f202f1f5bdc2
 - [x] Feedforward control (aka open loop control)
 - [x] Bang-bang control (aka on/off control)
 - [x] PID control
+- [x] H2 optimal control (aka LQG control), with per-state performance weights
+- [x] H-infinity output-feedback control using CARE/FARE
 
 ## Requirements
 
@@ -67,8 +69,6 @@ python main.py
 
 ### Coming soon:
 
-- [ ] H2 optimal control (aka LQG control)
-- [ ] H∞ optimal control (solve by either CARE or LMI in CVX)
 - [ ] Bode, Nyquist and Nichols plots of the OLTF L(s) with gain/phase margins
 - [ ] Interactive pole placement for the OLTF L(s)
 

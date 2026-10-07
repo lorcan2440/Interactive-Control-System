@@ -6,6 +6,7 @@ import pytest
 if __name__ == '__main__':
     import __init__
 from controllers import ManualController, OpenLoopController, BangBangController, PIDController
+from integrators import IntegratorType
 from plant import Plant
 
 
@@ -18,7 +19,10 @@ class SimpleSim:
         K_p=1.0,
         K_i=0.0,
         K_d=0.0,
+        tau=0.01,
         dt_anim=0.01,
+        integrator_method=IntegratorType.EULER_MARUYAMA,
+        use_ode_mode=False,
         manual_u=0.0,
         y_sp=0.0,
         U_plus=1.0,
@@ -27,7 +31,10 @@ class SimpleSim:
         self.K_p = K_p
         self.K_i = K_i
         self.K_d = K_d
+        self.tau = tau
         self.dt_anim = dt_anim
+        self.integrator_method = integrator_method
+        self.use_ode_mode = use_ode_mode
         self.manual_u = manual_u
         self.y_sp = y_sp
         self.U_plus = U_plus
@@ -118,22 +125,21 @@ def test_bangbang_controller_on_off_behaviour():
 
 
 def test_pid_controller_p_i_d_terms_and_memory():
-    sim = SimpleSim(K_p=2.0, K_i=1.0, K_d=0.5, dt_anim=0.1)
+    sim = SimpleSim(K_p=2.0, K_i=1.0, K_d=0.5, tau=0.1, dt_anim=0.1)
     controller = PIDController(sim=sim, plant=_make_1d_test_plant())
 
     e = np.array([[1.0]])
     u1 = controller.calc_u(e)
     # u_p = 2 * 1 = 2
     # u_i = 1 * (1 * 0.1) = 0.1
-    # u_d = 0.5 * ((1 - 0) / 0.1) = 0.5 * 10 = 5
-    assert pytest.approx(u1[0, 0], rel=1e-9) == pytest.approx(3.1, rel=1e-9)
+    # Derivative-on-measurement: y_meas changes from 0 to -1, so u_d = 5.
+    assert pytest.approx(u1[0, 0], rel=1e-9) == pytest.approx(7.1, rel=1e-9)
 
     # second call with same error: derivative term should be zero, integral doubles
     u2 = controller.calc_u(e)
     # u_p = 2
-    # u_i = 1 * (2 * 0.1) = 0.2
-    # u_d = 0
-    assert pytest.approx(u2[0, 0], rel=1e-9) == pytest.approx(3.0, rel=1e-9)
+    # u_i = 1 * (2 * 0.1) = 0.2; the measurement did not change, so u_d = 0.
+    assert pytest.approx(u2[0, 0], rel=1e-9) == pytest.approx(2.2, rel=1e-9)
 
 
 test_openloop_controller_computes_feedforward()

@@ -1,6 +1,4 @@
 from types import SimpleNamespace
-from unittest.mock import patch
-
 import numpy as np
 import pytest
 
@@ -52,15 +50,14 @@ def test_discrete_stability_uses_current_simulator_gains():
     assert np.max(np.abs(poles)) > 1.0
 
 
-def test_discrete_stability_debug_mode_returns_result():
+def test_discrete_stability_returns_result():
     controller = _make_pid_controller(tau=0.24)
 
-    with patch.object(controller.logger, 'debug') as log_debug:
-        stable, poles = controller.is_closed_loop_stable_discrete(debug=True)
+    stable, poles = controller.is_closed_loop_stable_discrete()
 
     assert stable
     assert poles.size == controller.plant.dims + 4
-    log_debug.assert_called_once()
+    assert np.all(np.isfinite(poles))
 
 
 @pytest.mark.parametrize(

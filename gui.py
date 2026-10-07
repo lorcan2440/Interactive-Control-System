@@ -152,22 +152,28 @@ class GUI:
 
         # controller selection radio buttons (None first)
         self.radio_none = QRadioButton('None')
-        self.radio_manual = QRadioButton('Manual Control')
-        self.radio_openloop = QRadioButton('Open Loop Control')
-        self.radio_bangbang = QRadioButton('Bang-Bang Control')
-        self.radio_pid = QRadioButton('PID Control')
+        self.radio_manual = QRadioButton('Manual')
+        self.radio_openloop = QRadioButton('Open Loop')
+        self.radio_bangbang = QRadioButton('Bang-Bang')
+        self.radio_pid = QRadioButton('PID')
+        self.radio_h2 = QRadioButton('H2')
+        self.radio_hinf = QRadioButton('H∞')
 
         self.controller_buttons_group.addButton(self.radio_none)
         self.controller_buttons_group.addButton(self.radio_manual)
         self.controller_buttons_group.addButton(self.radio_openloop)
         self.controller_buttons_group.addButton(self.radio_bangbang)
         self.controller_buttons_group.addButton(self.radio_pid)
+        self.controller_buttons_group.addButton(self.radio_h2)
+        self.controller_buttons_group.addButton(self.radio_hinf)
 
         controller_buttons_box_layout.addWidget(self.radio_none)
         controller_buttons_box_layout.addWidget(self.radio_manual)
         controller_buttons_box_layout.addWidget(self.radio_openloop)
         controller_buttons_box_layout.addWidget(self.radio_bangbang)
         controller_buttons_box_layout.addWidget(self.radio_pid)
+        controller_buttons_box_layout.addWidget(self.radio_h2)
+        controller_buttons_box_layout.addWidget(self.radio_hinf)
 
         controller_buttons_box.setLayout(controller_buttons_box_layout)
         first_row_hbox.addWidget(controller_buttons_box)
@@ -208,6 +214,8 @@ class GUI:
         self.radio_openloop.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.OPENLOOP))
         self.radio_bangbang.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.BANGBANG))
         self.radio_pid.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.PID))
+        self.radio_h2.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.H2))
+        self.radio_hinf.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.HINF))
 
         # initial controller selection and params
         self.radio_manual.setChecked(True)
@@ -299,7 +307,7 @@ class GUI:
         try:
             self.csv_log_file = open(self.csv_log_path, 'w', newline='', encoding='utf-8')
             self.csv_writer = csv.writer(self.csv_log_file)
-            self.csv_writer.writerow(['t', 'u', 'x', 'y', 'y_sp', 'e', 'cl_stable'])
+            self.csv_writer.writerow(['t', 'u', 'x', 'y', 'y_sp', 'e'])
             self.csv_log_file.flush()
         except OSError as e:
             self.csv_log_file = None
@@ -332,22 +340,9 @@ class GUI:
         y = float(self.y_data[0, -1])
         y_sp = float(self.y_sp_data[-1])
         e = y_sp - y
-        cl_stable = 'n/a'
-        line_pid = 'n/a'
 
-        if self.sim.controller_type == ControllerType.PID:
-            cl_stable, _ = self.sim.pid_controller.is_closed_loop_stable_discrete()
-            cl_stable = str(cl_stable)
-            K_p, K_i, K_d, tau = self.sim.pid_controller.K_p, self.sim.pid_controller.K_i, self.sim.pid_controller.K_d, self.sim.pid_controller.tau
-            line_pid = f'PID params: K_p={K_p:.4f}, K_i={K_i:.4f}, K_d={K_d:.4f}, tau={tau:.4f}'
-
-        line = f'[{t:.6f}, {u:.6f}, {x}, {y:.6f}, {y_sp:.6f}, e={e:.6f}, cl_stable={cl_stable}]'
-        self.csv_writer.writerow([f'{t:.6f}', f'{u:.6f}', str(x), f'{y:.6f}', f'{y_sp:.6f}', f'{e:.6f}', cl_stable])
-        if line_pid != 'n/a':
-            self.csv_writer.writerow([line_pid])
+        self.csv_writer.writerow([f'{t:.6f}', f'{u:.6f}', f'[{x[0]:.6f}, {x[1]:.6f}]', f'{y:.6f}', f'{y_sp:.6f}', f'{e:.6f}'])
         self.csv_log_file.flush()
-        self.logger.info(line)
-        self.logger.info(line_pid)
 
     def toggle_start_stop(self):
         # toggle the simulation ticker on and off
@@ -389,12 +384,24 @@ class GUI:
             self.set_controller(controller_type)
             self.build_controller_params(controller_type)
 
-    def add_param(self, key: str, display_name: str = None):
+    def add_param(self, key: str, display_name: str = None, cfg: dict[str, float] = None):
         # helper: create a controller parameter slider row
-        container, slider, val_label = make_slider_from_cfg(key, display_name)
+        container, slider, val_label = make_slider_from_cfg(key, display_name, cfg=cfg)
         slider.valueChanged.connect(lambda v, k=key: self.on_controller_param_changed(k, v))
         self.params_layout.addWidget(container)
         self.controller_param_widgets[key] = (slider, val_label)
+
+    @staticmethod
+    def get_controller_param_config(key: str) -> dict[str, float]:
+        if key.startswith('H2_C1_x'):
+            return GUI_SLIDER_CONFIG['H2_C1']
+        if key == 'H2_C1_u':
+            return GUI_SLIDER_CONFIG['H2_C1_u']
+        if key.startswith('Hinf_C1_x'):
+            return GUI_SLIDER_CONFIG['Hinf_C1_x']
+        if key == 'Hinf_C1_u':
+            return GUI_SLIDER_CONFIG['Hinf_C1_u']
+        return GUI_SLIDER_CONFIG[key]
 
     def build_controller_params(self, controller_type: ControllerType):
         
@@ -430,10 +437,30 @@ class GUI:
                 reset_btn.setToolTip('Reset PID integrator and derivative history')
                 reset_btn.clicked.connect(self.sim.pid_controller.reset_memory)
                 self.params_layout.addWidget(reset_btn)
+            case ControllerType.H2:
+                for i in range(self.sim.plant.dims):
+                    key = f'H2_C1_x{i + 1}'
+                    if not hasattr(self.sim, key):
+                        setattr(self.sim, key, GUI_SLIDER_CONFIG['H2_C1']['init'])
+                    self.add_param(key, key, GUI_SLIDER_CONFIG['H2_C1'])
+                if not hasattr(self.sim, 'H2_C1_u'):
+                    self.sim.H2_C1_u = GUI_SLIDER_CONFIG['H2_C1_u']['init']
+                self.add_param('H2_C1_u', 'H2_C1_u', GUI_SLIDER_CONFIG['H2_C1_u'])
+            case ControllerType.HINF:
+                for i in range(self.sim.plant.dims):
+                    key = f'Hinf_C1_x{i + 1}'
+                    if not hasattr(self.sim, key):
+                        setattr(self.sim, key, GUI_SLIDER_CONFIG['Hinf_C1_x']['init'])
+                    self.add_param(key, key, GUI_SLIDER_CONFIG['Hinf_C1_x'])
+                if not hasattr(self.sim, 'Hinf_C1_u'):
+                    self.sim.Hinf_C1_u = GUI_SLIDER_CONFIG['Hinf_C1_u']['init']
+                self.add_param(
+                    'Hinf_C1_u', 'Hinf_C1_u', GUI_SLIDER_CONFIG['Hinf_C1_u']
+                )
 
         # set slider positions to current values
         for key, (slider, val_label) in self.controller_param_widgets.items():
-            cfg = GUI_SLIDER_CONFIG[key]
+            cfg = self.get_controller_param_config(key)
             current_val = float(getattr(self.sim, key, cfg.get('init', cfg['min'])))
             pos = int(round((current_val - cfg['min']) / cfg['step']))
             pos = min(max(pos, 0), int(round((cfg['max'] - cfg['min']) / cfg['step'])))
@@ -441,17 +468,15 @@ class GUI:
             val_label.setText(f"{current_val:.2f}")
 
     def on_controller_param_changed(self, key: str, int_pos: int):
-        cfg = GUI_SLIDER_CONFIG[key]
-        if cfg is None:
-            return
+        cfg = self.get_controller_param_config(key)
         val = cfg['min'] + int_pos * cfg['step']
         _, val_label = self.controller_param_widgets.get(key, (None, None))
         if val_label is not None:
             val_label.setText(f"{val:.2f}")
 
-        if key in CONTROLLER_PARAMS_LIST:
+        if key in CONTROLLER_PARAMS_LIST or key.startswith('C1_') or key.startswith('Hinf_C1_'):
             setattr(self.sim, key, val)
-        
+
     def set_controller(self, controller_type: ControllerType):
         # set the simulation controller type and perform any needed setup
         match controller_type:
@@ -466,6 +491,12 @@ class GUI:
             case ControllerType.PID:
                 self.sim.controller_type = ControllerType.PID
                 self.sim.pid_controller.reset_memory()
+            case ControllerType.H2:
+                self.sim.controller_type = ControllerType.H2
+                self.sim.h2_controller.reset_memory()
+            case ControllerType.HINF:
+                self.sim.controller_type = ControllerType.HINF
+                self.sim.hinf_controller.reset_memory()
 
     def open_change_plant_dialog(self):
         """Show a dialog allowing the user to edit the plant state-space matrices.
@@ -581,6 +612,24 @@ class GUI:
 
         # for controllers that use plant matrices, recalculate any of their needed params
         self.sim.pid_controller.reset_memory()
+        self.sim.h2_controller.reset_memory()
+        for i in range(self.sim.plant.dims):
+            key = f'C1_x{i + 1}'
+            if not hasattr(self.sim, key):
+                setattr(self.sim, key, GUI_SLIDER_CONFIG['H2_C1']['init'])
+        if not hasattr(self.sim, 'C1_u'):
+            self.sim.C1_u = GUI_SLIDER_CONFIG['H2_C1_u']['init']
+        for i in range(self.sim.plant.dims):
+            key = f'Hinf_C1_x{i + 1}'
+            if not hasattr(self.sim, key):
+                setattr(self.sim, key, GUI_SLIDER_CONFIG['Hinf_C1_x']['init'])
+        if not hasattr(self.sim, 'Hinf_C1_u'):
+            self.sim.Hinf_C1_u = GUI_SLIDER_CONFIG['Hinf_C1_u']['init']
+        if self.sim.controller_type is ControllerType.H2:
+            self.build_controller_params(ControllerType.H2)
+        elif self.sim.controller_type is ControllerType.HINF:
+            self.sim.hinf_controller.reset_memory()
+            self.build_controller_params(ControllerType.HINF)
         self.sim.use_ode_mode = widget.use_ode_mode
         self.sim.integrator_method = widget.get_integrator_method()
 

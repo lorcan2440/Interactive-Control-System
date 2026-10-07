@@ -30,6 +30,10 @@ GUI_SLIDER_CONFIG = {
     'tau':           {'min': 0.0001, 'max': 1.0,     'step': 0.001,  'init': 0.01},
     'u_sat_plus':    {'min': 0.0,    'max': 50.0,    'step': 1.0,    'init': 25.0},
     'u_sat_minus':   {'min': -50.0,  'max': 0.0,     'step': 1.0,    'init': -25.0},
+    'H2_C1':         {'min': -30.0,  'max': 30.0,    'step': 0.5,    'init': 2.0},
+    'H2_C1_u':       {'min': 0.1,    'max': 10.0,    'step': 0.1,    'init': 1.0},
+    'Hinf_C1_x':     {'min': -30.0,  'max': 30.0,   'step': 0.5,    'init': 2.0},
+    'Hinf_C1_u':     {'min': 0.1,    'max': 10.0,   'step': 0.1,    'init': 1.0},
 }
 
 # time step sizes for integration, animation and sliding window
@@ -137,29 +141,30 @@ def get_logger(name: str = __name__) -> logging.Logger:
 
 
 def make_slider_from_cfg(key: str, display_name: str = None, 
-        orientation: Qt.Orientation = Qt.Orientation.Horizontal) -> \
+        orientation: Qt.Orientation = Qt.Orientation.Horizontal,
+        cfg: dict[str, float] = None) -> \
             tuple[QWidget, QSlider, QLabel]:
     """
     Create a slider row from a config key.
 
-    This function requires `key` to be a string present in
-    `GUI_SLIDER_CONFIG` and always returns a tuple
-    `(container_widget, slider, value_label)`.
+    When `cfg` is omitted, `key` must be present in `GUI_SLIDER_CONFIG`.
+    Always returns a tuple `(container_widget, slider, value_label)`.
 
     Args:
         key: the key into `GUI_SLIDER_CONFIG`.
         display_name: optional label text to show left of the slider.
         orientation: slider orientation.
+        cfg: optional slider configuration for dynamically named parameters.
 
     Returns:
         `(QWidget, QSlider, QLabel)` representing the row container, the
         slider, and the value label.
     """
 
-    if key not in GUI_SLIDER_CONFIG:
+    if cfg is None and key not in GUI_SLIDER_CONFIG:
         raise KeyError(f"Unknown slider key: {key}")
 
-    cfg = GUI_SLIDER_CONFIG[key]
+    cfg = cfg if cfg is not None else GUI_SLIDER_CONFIG[key]
     if cfg['step'] <= 0:
         raise ValueError(f"Slider step must be > 0 for '{key}' (got {cfg['step']})")
 
