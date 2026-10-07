@@ -128,6 +128,12 @@ class GUI:
         self.start_stop_button.clicked.connect(self.toggle_start_stop)
         first_row_hbox.addWidget(self.start_stop_button)
 
+        # reset simulation button
+        self.reset_button = QPushButton('Reset')
+        self.reset_button.setToolTip('Reset the simulation to its initial conditions')
+        self.reset_button.clicked.connect(self.reset_simulation)
+        first_row_hbox.addWidget(self.reset_button)
+
         # start/stop CSV logging button
         self.logging_button = QPushButton('Start Logging')
         self.logging_button.clicked.connect(self.toggle_csv_logging)
@@ -272,6 +278,12 @@ class GUI:
 
     ## UI callbacks
 
+    def reset_simulation(self):
+        self.sim.reset()
+        self.start_stop_button.setText('Start')
+        self.clear_buffers()
+        self.clear_graph_traces()
+
     def toggle_csv_logging(self):
         if not self.is_csv_logging:
             self.start_csv_logging()
@@ -321,16 +333,21 @@ class GUI:
         y_sp = float(self.y_sp_data[-1])
         e = y_sp - y
         cl_stable = 'n/a'
+        line_pid = 'n/a'
 
         if self.sim.controller_type == ControllerType.PID:
-            cl_stable, _ = self.sim.pid_controller.is_closed_loop_stable()
+            cl_stable, _ = self.sim.pid_controller.is_closed_loop_stable_continuous()
             cl_stable = str(cl_stable)
-
+            K_p, K_i, K_d, tau = self.sim.pid_controller.K_p, self.sim.pid_controller.K_i, self.sim.pid_controller.K_d, self.sim.pid_controller.tau
+            line_pid = f'PID params: K_p={K_p:.4f}, K_i={K_i:.4f}, K_d={K_d:.4f}, tau={tau:.4f}'
 
         line = f'[{t:.6f}, {u:.6f}, {x}, {y:.6f}, {y_sp:.6f}, e={e:.6f}, cl_stable={cl_stable}]'
         self.csv_writer.writerow([f'{t:.6f}', f'{u:.6f}', str(x), f'{y:.6f}', f'{y_sp:.6f}', f'{e:.6f}', cl_stable])
+        if line_pid != 'n/a':
+            self.csv_writer.writerow([line_pid])
         self.csv_log_file.flush()
         self.logger.info(line)
+        self.logger.info(line_pid)
 
     def toggle_start_stop(self):
         # toggle the simulation ticker on and off

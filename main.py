@@ -12,11 +12,16 @@ from PyQt6.QtCore import QTimer
 
 # local imports
 from plant import Plant, IntegratorType
-from controllers import ControllerType, ManualController, OpenLoopController, \
-    BangBangController, PIDController
+from controllers import ControllerType, ManualController, OpenLoopController, BangBangController, PIDController
 from gui import GUI
 from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAULT_PARAMS, \
     GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST, ANIM_SPEED_FACTOR, MAX_FRAMES_PER_TICK
+
+
+# TODO: change the "SDE vs ODE" option to "continuous vs discrete" and use the 
+# appropriate plant model and integrator types
+# TODO: add quantisation to the output and/or control input, and add an option to turn it on/off
+# TODO: add companding to the output and/or control input, and add an option to turn it on/off
 
 
 class Simulation(QWidget):
@@ -109,6 +114,19 @@ class Simulation(QWidget):
         self.running = False
         self.wall_time_prev = None
         self.sim_time_remainder = 0.0
+
+    def reset(self):
+        """Return the simulation state to its configured initial conditions."""
+        self.ticker.stop()
+        self.running = False
+        self.wall_time_prev = None
+        self.sim_time_remainder = 0.0
+        self.t = 0.0
+
+        self.plant.x = self.plant.x_0.copy()
+        self.plant.u = self.plant.u_0.copy()
+        self.y_meas_0 = self.plant.sample_measurement()
+        self.pid_controller.reset_memory()
 
     def update_frame(self):
         '''

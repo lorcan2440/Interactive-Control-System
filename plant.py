@@ -164,7 +164,7 @@ class Plant:
         self.Q = Q
         self.R = R
 
-    def set_cached_arrays(self):
+    def set_cached_arrays(self, **kwargs):
         '''
         Set cached arrays and matrices that are used in plant integration and controller design.
         This is to be called every time the plant matrices are changed.
@@ -246,6 +246,18 @@ class Plant:
         # x_{k+1} = A_d x_k + B_d u_k
         self.A_d = expm(A * self.dt_anim)  # shape: (dims, dims)
         self.B_d = np.linalg.solve(A, (self.A_d - np.eye(A.shape[0])) @ B)  # shape: (dims, 1)
+
+        # TODO: check these assemble correctly using tests - work one out by hand
+        # plant transfer function G_p(s) from u to y
+        self.G_p = lambda s: C @ np.linalg.solve(s * np.eye(A.shape[0]) - A, B) + D  # shape: (1, 1) (scalar)
+        # plant transfer function G_d(s) from process noise w_proc to y
+        self.G_d = lambda s: C @ np.linalg.solve(s * np.eye(A.shape[0]) - A, np.eye(A.shape[0]))  # shape: (1, dims)
+        # augmented plant transfer function P(s) as block matrix
+        self.P11 = lambda s: np.array([[-self.G_d(s), -1, 1]])  # shape: (1, dims + 2)
+        self.P12 = lambda s: np.array([[C - self.G_p(s)]])  # shape: (1, 1)
+        self.P21 = lambda s: np.array([[self.G_d(s), 1, 0], [np.zeros((1, self.dims)), 0, 1]])  # shape: (2, dims + 2)
+        self.P22 = lambda s: np.array([[self.G_p(s)], [0]])  # shape: (2, 1)
+        self.P = lambda s: np.block([[self.P11(s), self.P12(s)], [self.P21(s), self.P22(s)]])  # shape: (3, dims + 3)
 
     def set_all_arrays(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray, \
             Q: np.ndarray, R: np.ndarray):

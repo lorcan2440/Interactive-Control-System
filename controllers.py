@@ -125,7 +125,6 @@ class BangBangController:
 
 class PIDController:
 
-    # TODO: BUG: when C = [1, 1], u blows up for large K_p - why?
     # TODO: add anti-windup for integral term
     # TODO: add function to calculate PID parameters based on integrated absolute error (IAE) optimality
     # TODO: add function to calculate PID parameters based on integrated time-weighted absolute error (ITAE) optimality
@@ -169,14 +168,16 @@ class PIDController:
             raise ValueError("e must have shape (1, 1)")
         
         # check closed-loop stability
-        cl_stable, cl_z_poles = self.is_closed_loop_stable()
+        """
+        cl_stable, cl_s_poles = self.is_closed_loop_stable()
         if not cl_stable and self.cl_stable_prev:  # only log one warning
             self.logger.warning(f'''Closed-loop unstable for current PID parameters: 
-                eigenvalues of A_cl (poles in z-plane) are {cl_z_poles}. Prev: {self.cl_stable_prev}''')
+                eigenvalues of A_cl (poles in s-plane) are {cl_s_poles}. Prev: {self.cl_stable_prev}''')
         elif cl_stable:
             self.cl_stable_prev = True
         else:
             self.cl_stable_prev = False
+        """
 
         # get measurement
         y_meas = self.sim.y_sp - e
@@ -184,28 +185,36 @@ class PIDController:
         # sampling period
         dt = self.sim.dt_anim
 
+        # controller parameters and time constants
+        self.K_p = self.sim.K_p  # proportional gain
+        self.K_i = self.sim.K_i  # integral gain
+        self.K_d = self.sim.K_d  # derivative gain
+        self.tau = self.sim.tau  # derivative filter time constant
+        self.T_i = self.sim.K_p / self.sim.K_i if self.sim.K_i != 0 else np.inf  # integral time constant
+        self.T_d = self.sim.K_d / self.sim.K_p if self.sim.K_p != 0 else np.inf  # derivative time constant
+
         # proportional term
-        u_p = self.sim.K_p * e
+        u_p = self.K_p * e
 
         # integral term
         self.e_integrated += e * dt
-        u_i = self.sim.K_i * self.e_integrated
+        u_i = self.K_i * self.e_integrated
 
         # filtered derivative on measurement
-        if self.sim.K_d == 0:
+        if self.K_d == 0:
             u_d = np.array([[0.0]])
         else:
             # low-pass filter time constant: use user-configured `tau` when available,
             # otherwise fall back to 5x the sampling period
             # NOTE: consider setting this to 0.1x the derivative time constant K_p / K_d
-            tau = getattr(self.sim, 'tau', max(5.0 * dt, 1e-6))
+            tau = getattr(self, 'tau', max(5.0 * dt, 1e-6))
 
             # Tustin's method implementation of the first-order low-pass 
             # filter on the derivative term, with input y and output u_d
             alpha = 1.0 - dt / tau
             alpha = max(min(alpha, 1.0), 0.0)
 
-            u_d = alpha * self.u_d_prev - (self.sim.K_d / tau) * (y_meas - self.y_meas_prev)
+            u_d = alpha * self.u_d_prev - (self.K_d / tau) * (y_meas - self.y_meas_prev)
             self.u_d_prev = u_d
 
         # update stored noisy measurement
@@ -216,51 +225,118 @@ class PIDController:
 
         return u
     
-    def is_closed_loop_stable(self) -> tuple[bool, np.ndarray]:
+    def K_y(self, s: complex) -> complex:
+        '''
+        Controller transfer function (continuous-time) from y_meas to u.
+        '''
+        return self.K_p * (self.T_d * s / (self.tau * s + 1) - 1 - 1 / (self.T_i * s))
+    
+    def K_sp(self, s: complex) -> complex:
+        '''
+        Controller transfer function (continuous-time) from y_sp to u.
+        '''
+        return self.K_p * (1 + 1 / (self.T_i * s))
+    
+    def K(self, s: complex) -> np.ndarray:
+
+        '''
+        Controller transfer function (continuous-time) from [y_meas, y_sp]^T to u, 
+        suitable for use in the generalised plant and controller interconnection.
+
+        The first entry is the TF from y_meas to u. The second entry is the TF from y_sp to u.
+
+        This is the form for the PID controller with filtered derivative on the measurement.
+        '''
+
+        return np.array([[self.K_y(s), self.K_sp(s)]])  # shape: (1, 2)
+    
+    def lower_LFT(self, s: complex, C: float = 1.0) -> np.ndarray:
+        '''
+        Evaluate the lower linear fractional transformation (LFT) F_l(P, K)(s) of the
+        generalised plant P(s) and the controller K(s).
+
+        The lower LFT is the transfer function from the generalised disturbance input w = [d_i, d_o, y_sp]^T
+        to the performance output z = e + C u, where e is the error (y_sp - y_meas) and C is the 
+        performance gain on the control input u.
+        '''
+
+        # plant TFs
+        G_p = self.plant.G_p(s)  # TF from u to y_meas
+        G_d = self.plant.G_d(s)  # TF from d_i to y_meas
+
+        # controller TFs
+        K_y = self.K_y(s)  # TF from y_meas to u
+        K_sp = self.K_sp(s)  # TF from y_sp to u
+
+        # compute lower LFT using formula: F_l(P, K) = P11 + P12 @ K @ (I - P22 @ K)^(-1) @ P21
+        L = (C - G_p) / (1 - K_y * G_p)
+        return np.array([
+            [-G_d + L * K_y * G_d, -1 + L * K_y, 1 + L * K_sp]
+        ])
+    
+    def is_closed_loop_stable_continuous(self) -> tuple[bool, np.ndarray]:
         """
-        Return whether the sampled-data closed loop is asymptotically stable.
+        Return whether the closed loop is asymptotically stable, based on the continuous-time 
+        closed-loop state transition matrix A_cl.
 
-        This check uses a linear P-only approximation of the current controller
-        (i.e. it ignores `K_i`, `K_d`, and derivative filtering `tau` for now):
+        This function checks if the eigenvalues of the closed-loop state transition 
+        matrix A_cl must have Re s < 0. The matrix A_cl is obtained by:
 
-            x_dot = A x + B u,      y = C x
-            u[k] = K_p (r[k] - y[k]) = K_p (r[k] - C x[k])
-
-        With zero-order hold over one control period `T = dt_anim`, this becomes
-        the discrete-time model
-
-            x[k+1] = A_d x[k] + B_d u[k],
-            A_d = exp(A T),
-            B_d = integral_0^T exp(A t) dt @ B
-                = A^{-1}(A_d - I)B   (used below; valid when A is invertible).
-
-        Substituting the P law gives
-
-            x[k+1] = (A_d - B_d K_p C) x[k] + B_d K_p r[k]
-                   = A_cl x[k] + ... .
-
-        Stability is determined by the homogeneous part `x[k+1] = A_cl x[k]`:
-        all closed-loop poles/eigenvalues `z_i` of `A_cl` must satisfy `|z_i| < 1`.
-
-        For low-order scalar characteristic polynomials, the Jury criterion 
-        gives equivalent inequalities. Here we check the equivalent eigenvalue 
-        condition directly.
-
-        Continuous-time analogue: poles `s_i` must satisfy `Re(s_i) < 0`.
-        Under exact sampling, `z_i = exp(s_i T)`.
+        - finding the state space realisation of the controller K(s) in continuous time
+        - augmenting the plant state space with the controller state space
+        - computing the closed-loop state transition matrix A_cl for the augmented system
         """
+
+        # get plant matrices (continuous time)
+        A = self.plant.A  # shape: (dims, dims)
+        B = self.plant.B  # shape: (dims, 1)
+        C = self.plant.C  # shape: (1, dims)
+        D = self.plant.D  # shape: (1, 1)
+
+        # get controller parameters
+        K_p = self.K_p
+        K_i = self.K_i
+        K_d = self.K_d
+        tau = self.tau
+
+        # controller: K(s) = K_p + K_i / s + K_d * s / (tau * s + 1)
+        # state space realisation of the PID controller (in controllable canonical form):
+        A_K = np.array([[0, 1], [0, -1 / tau]])  # shape: (2, 2)
+        B_K = np.array([[0], [1]])  # shape: (2, 1)
+        C_K = np.array([[-K_i / tau, -(K_i + K_d / tau ** 2)]])  # shape: (1, 2)
+        D_K = np.array([[K_d / tau - K_p]])  # shape: (1, 1)
+
+        # check for ill-posed algebraic loop (D_K @ D = 1)
+        M = 1 - D_K @ D
+        if np.isclose(M, 0.0):
+            raise ValueError(f'Ill-posed algebraic loop: 1 - D_K @ D = {M} ≈ 0.')
+
+        # closed-loop state transition matrix
+        A_cl = np.block([
+            [A + B @ C * (D_K / M),  B @ C_K / M],
+            [B_K @ C / M,            A_K + (D / M) * B_K @ C_K]
+        ])
+
+        # check eigenvalues of A_cl
+        eigvals = np.linalg.eigvals(A_cl)
+
+        return np.all(np.real(eigvals) < 0), eigvals
+    
+    def is_closed_loop_stable_discrete(self) -> tuple[bool, np.ndarray]:
+        """
+        Return whether the closed loop is asymptotically stable, based on the discrete-time 
+        closed-loop state transition matrix A_d_cl.
+
+        This function checks if the eigenvalues of the discretised closed-loop state transition 
+        matrix A_d_cl must have |z| < 1.
+        """
+
+        # NOTE: this works, but only for proportional control with D = 0
+        # TODO: generalise to allowing D != 0
+        # TODO: generalise to K_i, K_d != 0, including the effect of tau
 
         # get plant matrices
         C = self.plant.C  # shape: (1, dims)
-
-        # TODO: can we also calculate this using the continuous-time closed-loop
-        # matrix, then use the "are all eigenvalues in the left half plane?" criterion 
-        # for stability (Laplace check instead of Z-transform check)?
-        # use the relation z_i = exp(s_i T) to convert between the two
-
-        # TODO: generalise to allowing D != 0
-
-        # TODO: generalise to K_i, K_d != 0, including the effect of tau
 
         # get discrete-time matrices
         A_d, B_d = self.plant.A_d, self.plant.B_d  # shapes: (dims, dims), (dims, 1)
@@ -269,10 +345,9 @@ class PIDController:
         # x_{k+1} = A_cl x_k + B_d @ K_p * y_sp, where A_cl = A_d - B_d @ K_p @ C
         A_cl = A_d - B_d @ (self.sim.K_p * C)  # closed-loop state transition matrix
 
-        # Jury stability test: all discrete-time poles z must have |z| < 1
+        # all discrete-time poles z must have |z| < 1
         z_poles = np.linalg.eigvals(A_cl)
         return np.all(np.abs(z_poles) < 1.0), z_poles
-
 
 # TODO: implement the H2 optimal controller from first principles - 
 # do not just copy the below blindly as it gave suspicious results previously

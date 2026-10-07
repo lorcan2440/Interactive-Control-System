@@ -39,7 +39,7 @@ GUI_SLIDER_CONFIG = {
 TIME_STEPS = {
     'DT_INT': 0.001,
     'DT_ANIM': 1 / 60,  # 60 FPS
-    'DT_SLIDING_WINDOW': 0.1,
+    'DT_SLIDING_WINDOW': 5,
 }
 
 MAX_FRAMES_PER_TICK = 10  # prevent infinite loop if frames take too long to compute
@@ -210,8 +210,8 @@ def get_t_span(t_start: float, t_stop: float, dt: float) -> np.ndarray:
     t_span = np.arange(t_start, t_stop + dt, dt)
     if t_span[-1] - t_stop > 0:
         if np.isclose(t_span[-1], t_stop, atol=EPS):
-            t_span[-1] = t_stop
+            t_span[-1] = t_stop  # snap last point to t_stop if within tolerance
         else:
-            t_span = t_span[:-1]
+            t_span = t_span[:-1]  # remove last point if it exceeds t_stop
 
     return t_span
