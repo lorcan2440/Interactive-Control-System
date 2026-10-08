@@ -13,7 +13,7 @@ from PyQt6.QtCore import QTimer
 # local imports
 from plant import Plant, IntegratorType
 from controllers import ControllerType, ManualController, OpenLoopController, BangBangController, \
-    PIDController, H2Controller, HInfinityController
+    PIDController, H2Controller, HInfinityController, ModelPredictiveController
 from gui import GUI
 from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAULT_PARAMS, \
     GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST, ANIM_SPEED_FACTOR, MAX_FRAMES_PER_TICK
@@ -96,6 +96,7 @@ class Simulation(QWidget):
         self.pid_controller = PIDController(sim=self, plant=self.plant)
         self.h2_controller = H2Controller(simulator=self, plant=self.plant)
         self.hinf_controller = HInfinityController(simulator=self, plant=self.plant)
+        self.mpc_controller = ModelPredictiveController(simulator=self, plant=self.plant)
 
         # set controller type
         self.controller_type = ControllerType.MANUAL
@@ -110,6 +111,7 @@ class Simulation(QWidget):
         for i in range(self.plant.dims):
             setattr(self, f'Hinf_C1_x{i + 1}', GUI_SLIDER_CONFIG['Hinf_C1_x']['init'])
         self.Hinf_C1_u = GUI_SLIDER_CONFIG['Hinf_C1_u']['init']
+        self.MPC_N = GUI_SLIDER_CONFIG['MPC_N']['init']
         # init GUI window
         self.gui = GUI(self, dump_logs_on_stop=False)
         self.gui.init_gui()
@@ -137,6 +139,7 @@ class Simulation(QWidget):
         self.pid_controller.reset_memory()
         self.h2_controller.reset_memory()
         self.hinf_controller.reset_memory()
+        self.mpc_controller.reset_memory()
 
     def update_frame(self):
         '''
@@ -204,6 +207,8 @@ class Simulation(QWidget):
                 u = self.h2_controller.calc_u(e)
             case ControllerType.HINF:
                 u = self.hinf_controller.calc_u(e)
+            case ControllerType.MPC:
+                u = self.mpc_controller.calc_u(e)
             case _:
                 raise ValueError(f'Invalid controller type: {self.controller_type}')
 

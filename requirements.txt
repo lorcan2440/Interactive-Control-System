@@ -1,5 +1,6 @@
 numpy==2.4.2
 scipy==1.18.1
+osqp==1.0.5
 PyQt6==6.10.2
 PyQt6_sip==13.8.0
 pyqtgraph==0.14.0

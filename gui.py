@@ -1,5 +1,6 @@
 # built-ins
 import csv
+import copy
 from datetime import datetime
 from pathlib import Path
 
@@ -14,8 +15,8 @@ import pyqtgraph as pg
 from pyqtgraph import GraphicsLayoutWidget, mkPen
 
 # local imports
-from controllers import ControllerType
 from plant import IntegratorType
+from controllers import ControllerType
 from utils import make_slider_from_cfg, PLANT_DEFAULT_PARAMS, MAX_SIG_FIGS, ANIM_SPEED_FACTOR, \
     GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
 
@@ -158,6 +159,7 @@ class GUI:
         self.radio_pid = QRadioButton('PID')
         self.radio_h2 = QRadioButton('H2')
         self.radio_hinf = QRadioButton('H∞')
+        self.radio_mpc = QRadioButton('MPC')
 
         self.controller_buttons_group.addButton(self.radio_none)
         self.controller_buttons_group.addButton(self.radio_manual)
@@ -166,6 +168,7 @@ class GUI:
         self.controller_buttons_group.addButton(self.radio_pid)
         self.controller_buttons_group.addButton(self.radio_h2)
         self.controller_buttons_group.addButton(self.radio_hinf)
+        self.controller_buttons_group.addButton(self.radio_mpc)
 
         controller_buttons_box_layout.addWidget(self.radio_none)
         controller_buttons_box_layout.addWidget(self.radio_manual)
@@ -174,6 +177,7 @@ class GUI:
         controller_buttons_box_layout.addWidget(self.radio_pid)
         controller_buttons_box_layout.addWidget(self.radio_h2)
         controller_buttons_box_layout.addWidget(self.radio_hinf)
+        controller_buttons_box_layout.addWidget(self.radio_mpc)
 
         controller_buttons_box.setLayout(controller_buttons_box_layout)
         first_row_hbox.addWidget(controller_buttons_box)
@@ -216,6 +220,7 @@ class GUI:
         self.radio_pid.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.PID))
         self.radio_h2.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.H2))
         self.radio_hinf.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.HINF))
+        self.radio_mpc.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.MPC))
 
         # initial controller selection and params
         self.radio_manual.setChecked(True)
@@ -393,6 +398,8 @@ class GUI:
 
     @staticmethod
     def get_controller_param_config(key: str) -> dict[str, float]:
+        if key == 'MPC_N':
+            return GUI_SLIDER_CONFIG['MPC_N']
         if key.startswith('H2_C1_x'):
             return GUI_SLIDER_CONFIG['H2_C1_x']
         if key == 'H2_C1_u':
@@ -457,6 +464,17 @@ class GUI:
                 self.add_param(
                     'Hinf_C1_u', 'Hinf_C1_u', GUI_SLIDER_CONFIG['Hinf_C1_u']
                 )
+            case ControllerType.MPC:
+                self.add_param('MPC_N', 'Horizon N', GUI_SLIDER_CONFIG['MPC_N'])
+                model_button = QPushButton('Set internal plant model')
+                model_button.clicked.connect(self.open_mpc_model_dialog)
+                self.params_layout.addWidget(model_button)
+                cost_button = QPushButton('Set optimisation function')
+                cost_button.clicked.connect(self.open_mpc_cost_dialog)
+                self.params_layout.addWidget(cost_button)
+                constraint_button = QPushButton('Set optimisation constraints')
+                constraint_button.clicked.connect(self.open_mpc_constraint_dialog)
+                self.params_layout.addWidget(constraint_button)
 
         # set slider positions to current values
         for key, (slider, val_label) in self.controller_param_widgets.items():
@@ -478,8 +496,11 @@ class GUI:
             key in CONTROLLER_PARAMS_LIST
             or key.startswith('H2_C1_')
             or key.startswith('Hinf_C1_')
+            or key == 'MPC_N'
         ):
             setattr(self.sim, key, val)
+            if key == 'MPC_N':
+                self.sim.mpc_controller.ensure_horizon(int(val))
 
     def set_controller(self, controller_type: ControllerType):
         # set the simulation controller type and perform any needed setup
@@ -501,6 +522,94 @@ class GUI:
             case ControllerType.HINF:
                 self.sim.controller_type = ControllerType.HINF
                 self.sim.hinf_controller.reset_memory()
+            case ControllerType.MPC:
+                self.sim.controller_type = ControllerType.MPC
+                self.sim.mpc_controller.reset_memory()
+
+    def _show_mpc_dialog(self, dialog):
+        """Pause simulation during a modal MPC settings dialog."""
+        was_running = getattr(self.sim, 'running', False)
+        if was_running:
+            self.sim.ticker.stop()
+            self.sim.running = False
+        try:
+            dialog.exec()
+        finally:
+            if was_running:
+                self.sim.wall_time_prev = None
+                self.sim.sim_time_remainder = 0.0
+                self.sim.ticker.start(
+                    int(self.sim.dt_anim * 1000 / ANIM_SPEED_FACTOR)
+                )
+                self.sim.running = True
+
+    def open_mpc_model_dialog(self):
+        """Edit the MPC internal plant model or copy the true plant model."""
+        dialog = QDialog(self.sim)
+        dialog.setWindowTitle('Set internal MPC plant model')
+        layout = QVBoxLayout(dialog)
+        widget = StateSpaceMatrixInput(
+            parent=dialog,
+            initial_dims=self.sim.plant.dims,
+            show_noise_matrices=False,
+            show_integrator_controls=False,
+            allow_dimension_change=False,
+        )
+        widget.set_table_ABCD(
+            self.sim.mpc_controller.A_hat,
+            self.sim.mpc_controller.B_hat,
+            self.sim.mpc_controller.C_hat,
+            self.sim.mpc_controller.D_hat,
+        )
+        set_true_button = QPushButton('Set to true plant model')
+        set_true_button.clicked.connect(lambda: widget.set_table_ABCD(
+            self.sim.plant.A, self.sim.plant.B, self.sim.plant.C, self.sim.plant.D
+        ))
+        layout.addWidget(set_true_button)
+        layout.addWidget(widget)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(lambda: self._accept_mpc_model(widget, dialog))
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        self._show_mpc_dialog(dialog)
+
+    def _accept_mpc_model(self, widget, dialog):
+        try:
+            self.sim.mpc_controller.set_model_matrices(*widget.get_table_ABCD())
+        except ValueError as error:
+            QMessageBox.warning(dialog, 'Invalid internal model', str(error))
+            return
+        dialog.accept()
+
+    def open_mpc_cost_dialog(self):
+        """Edit stage and terminal MPC value-function weights."""
+        self.sim.mpc_controller.ensure_horizon(int(self.sim.MPC_N))
+        dialog = MPCIndexedSettingsDialog(
+            parent=self.sim,
+            horizon=int(self.sim.MPC_N),
+            state_count=self.sim.plant.dims,
+            values=self.sim.mpc_controller.costs,
+            settings_type='cost',
+        )
+        self._show_mpc_dialog(dialog)
+        if dialog.result() == QDialog.DialogCode.Accepted:
+            self.sim.mpc_controller.costs = dialog.values
+
+    def open_mpc_constraint_dialog(self):
+        """Edit stage and terminal MPC inequality constraints."""
+        self.sim.mpc_controller.ensure_horizon(int(self.sim.MPC_N))
+        dialog = MPCIndexedSettingsDialog(
+            parent=self.sim,
+            horizon=int(self.sim.MPC_N),
+            state_count=self.sim.plant.dims,
+            values=self.sim.mpc_controller.constraints,
+            settings_type='constraint',
+        )
+        self._show_mpc_dialog(dialog)
+        if dialog.result() == QDialog.DialogCode.Accepted:
+            self.sim.mpc_controller.constraints = dialog.values
 
     def open_change_plant_dialog(self):
         """Show a dialog allowing the user to edit the plant state-space matrices.
@@ -634,10 +743,272 @@ class GUI:
         elif self.sim.controller_type is ControllerType.HINF:
             self.sim.hinf_controller.reset_memory()
             self.build_controller_params(ControllerType.HINF)
+        if self.sim.mpc_controller.A_hat.shape != self.sim.plant.A.shape:
+            self.sim.mpc_controller.reset_for_state_dimension()
+        if self.sim.controller_type is ControllerType.MPC:
+            self.sim.mpc_controller.reset_memory()
+            self.build_controller_params(ControllerType.MPC)
         self.sim.use_ode_mode = widget.use_ode_mode
         self.sim.integrator_method = widget.get_integrator_method()
 
         dialog.accept()
+
+
+class NumericMatrixInput(QWidget):
+    """Editable finite-valued matrix table used by the MPC settings dialogs."""
+
+    def __init__(self, title, initial_matrix, allow_row_count=False, parent=None):
+        super().__init__(parent)
+        self.allow_row_count = allow_row_count
+        self.editor_layout = QVBoxLayout(self)
+        self.editor_layout.setContentsMargins(0, 0, 0, 0)
+        self.editor_layout.addWidget(QLabel(title))
+
+        initial_matrix = np.asarray(initial_matrix, dtype=float)
+        self.column_count = initial_matrix.shape[1] if initial_matrix.ndim == 2 else 1
+        if allow_row_count:
+            row_layout = QHBoxLayout()
+            row_layout.addWidget(QLabel('Rows'))
+            self.row_spin = QSpinBox()
+            self.row_spin.setRange(0, 100)
+            self.row_spin.valueChanged.connect(self._resize_rows)
+            row_layout.addWidget(self.row_spin)
+            row_layout.addStretch()
+            self.editor_layout.addLayout(row_layout)
+
+        self.table = QTableWidget()
+        self.table.setItemDelegate(FloatDelegate())
+        self.table.verticalHeader().setVisible(False)
+        self.table.setMinimumSize(120, 65)
+        self.editor_layout.addWidget(self.table)
+        self.set_matrix(initial_matrix)
+
+    def _resize_rows(self, row_count):
+        """Resize the table while preserving existing entries where possible."""
+        saved_rows = []
+        for row in range(self.table.rowCount()):
+            saved_rows.append([
+                self.table.item(row, column).text()
+                if self.table.item(row, column) is not None else '0.0'
+                for column in range(self.column_count)
+            ])
+        self.table.setRowCount(row_count)
+        self.table.setColumnCount(self.column_count)
+        for row in range(row_count):
+            for column in range(self.column_count):
+                text = (
+                    saved_rows[row][column]
+                    if row < len(saved_rows) else '0.0'
+                )
+                self.table.setItem(row, column, QTableWidgetItem(text))
+
+    def set_matrix(self, matrix):
+        """Populate the editor with a matrix of the configured column count."""
+        matrix = np.asarray(matrix, dtype=float)
+        if matrix.ndim != 2 or matrix.shape[1] != self.column_count:
+            raise ValueError('Matrix dimensions do not match the configured editor.')
+        if self.allow_row_count:
+            self.row_spin.blockSignals(True)
+            self.row_spin.setValue(matrix.shape[0])
+            self.row_spin.blockSignals(False)
+        self.table.setRowCount(matrix.shape[0])
+        self.table.setColumnCount(self.column_count)
+        for row in range(matrix.shape[0]):
+            for column in range(self.column_count):
+                self.table.setItem(
+                    row, column, QTableWidgetItem(f'{matrix[row, column]:.8g}')
+                )
+
+    def get_matrix(self):
+        """Read the table and reject empty, non-finite, or invalid cells."""
+        matrix = np.zeros((self.table.rowCount(), self.column_count), dtype=float)
+        for row in range(self.table.rowCount()):
+            for column in range(self.column_count):
+                item = self.table.item(row, column)
+                if item is None or not item.text().strip():
+                    raise ValueError('Matrix entries cannot be empty.')
+                try:
+                    matrix[row, column] = float(item.text())
+                except ValueError as error:
+                    raise ValueError('Matrix entries must be valid numbers.') from error
+        if not np.all(np.isfinite(matrix)):
+            raise ValueError('Matrix entries must be finite numbers.')
+        return matrix
+
+
+class MPCIndexedSettingsDialog(QDialog):
+    """Edit cost weights or constraints for one selected MPC stage."""
+
+    def __init__(self, parent, horizon, state_count, values, settings_type):
+        super().__init__(parent)
+        self.horizon = int(horizon)
+        self.state_count = int(state_count)
+        self.settings_type = settings_type
+        self.values = copy.deepcopy(values)
+        self._loading = False
+        self._current_stage = 0
+
+        self.setWindowTitle(
+            'Set optimisation function'
+            if settings_type == 'cost' else 'Set optimisation constraints'
+        )
+        layout = QVBoxLayout(self)
+        stage_layout = QHBoxLayout()
+        stage_layout.addWidget(QLabel('Stage i'))
+        self.stage_combo = QComboBox()
+        for stage in range(self.horizon + 1):
+            self.stage_combo.addItem(str(stage), stage)
+        self.stage_combo.currentIndexChanged.connect(self._stage_changed)
+        stage_layout.addWidget(self.stage_combo)
+        stage_layout.addStretch()
+        layout.addLayout(stage_layout)
+
+        if settings_type == 'cost':
+            self.V_xx_editor = NumericMatrixInput(
+                'V_xx_i', np.eye(self.state_count), parent=self
+            )
+            layout.addWidget(self.V_xx_editor)
+            weight_layout = QHBoxLayout()
+            self.V_yy_edit = self._new_nonnegative_edit()
+            self.V_uu_edit = self._new_nonnegative_edit()
+            weight_layout.addWidget(QLabel('V_yy_i'))
+            weight_layout.addWidget(self.V_yy_edit)
+            weight_layout.addWidget(QLabel('V_uu_i'))
+            weight_layout.addWidget(self.V_uu_edit)
+            layout.addLayout(weight_layout)
+        else:
+            self.M_editor = NumericMatrixInput(
+                'M_i', np.empty((0, self.state_count)),
+                allow_row_count=True, parent=self
+            )
+            self.N_editor = NumericMatrixInput(
+                'N_i', np.empty((0, 1)),
+                allow_row_count=True, parent=self
+            )
+            self.b_editor = NumericMatrixInput(
+                'b_i', np.empty((0, 1)),
+                allow_row_count=True, parent=self
+            )
+            self.M_editor.row_spin.valueChanged.connect(self._sync_constraint_rows)
+            self.N_editor.row_spin.valueChanged.connect(self._sync_constraint_rows)
+            self.b_editor.row_spin.valueChanged.connect(self._sync_constraint_rows)
+            matrix_layout = QHBoxLayout()
+            matrix_layout.addWidget(self.M_editor)
+            matrix_layout.addWidget(self.N_editor)
+            matrix_layout.addWidget(self.b_editor)
+            layout.addLayout(matrix_layout)
+
+        self.whole_horizon_button = QPushButton('Set for whole horizon')
+        self.whole_horizon_button.clicked.connect(self._set_for_whole_horizon)
+        layout.addWidget(self.whole_horizon_button)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._load_stage(0)
+
+    @staticmethod
+    def _new_nonnegative_edit():
+        edit = QLineEdit('1.0')
+        edit.setValidator(QDoubleValidator(0.0, 1e100, 12, edit))
+        return edit
+
+    def _current_value(self):
+        if self.settings_type == 'cost':
+            V_yy = float(self.V_yy_edit.text())
+            V_uu = float(self.V_uu_edit.text())
+            return {
+                'V_xx': self.V_xx_editor.get_matrix(),
+                'V_yy': V_yy,
+                'V_uu': V_uu,
+            }
+        return {
+            'M': self.M_editor.get_matrix(),
+            'N': self.N_editor.get_matrix(),
+            'b': self.b_editor.get_matrix(),
+        }
+
+    def _save_current(self):
+        self.values[self._current_stage] = self._current_value()
+
+    def _load_stage(self, stage):
+        self._loading = True
+        self._current_stage = stage
+        value = self.values[stage]
+        if self.settings_type == 'cost':
+            self.V_xx_editor.set_matrix(value['V_xx'])
+            self.V_yy_edit.setText(str(value['V_yy']))
+            self.V_uu_edit.setText(str(value['V_uu']))
+            terminal = stage == self.horizon
+            self.V_yy_edit.setEnabled(not terminal)
+            self.V_uu_edit.setEnabled(not terminal)
+        else:
+            self.M_editor.set_matrix(value['M'])
+            self.N_editor.set_matrix(value['N'])
+            self.b_editor.set_matrix(value['b'])
+            self.N_editor.setEnabled(stage != self.horizon)
+        self._loading = False
+
+    def _stage_changed(self, index):
+        if self._loading:
+            return
+        next_stage = int(self.stage_combo.itemData(index))
+        previous_stage = self._current_stage
+        try:
+            self._save_current()
+        except (ValueError, KeyError) as error:
+            QMessageBox.warning(self, 'Invalid settings', str(error))
+            self.stage_combo.blockSignals(True)
+            self.stage_combo.setCurrentIndex(previous_stage)
+            self.stage_combo.blockSignals(False)
+            return
+        self._load_stage(next_stage)
+
+    def _sync_constraint_rows(self, row_count):
+        if self._loading:
+            return
+        for editor in (self.M_editor, self.N_editor, self.b_editor):
+            if editor.row_spin.value() != row_count:
+                editor.row_spin.blockSignals(True)
+                editor.row_spin.setValue(row_count)
+                editor.row_spin.blockSignals(False)
+                editor._resize_rows(row_count)
+
+    def _set_for_whole_horizon(self):
+        try:
+            current_value = self._current_value()
+        except (ValueError, KeyError) as error:
+            QMessageBox.warning(self, 'Invalid settings', str(error))
+            return
+
+        # Terminal stages have no input/output cost or input constraints;
+        # preserve those stage-specific values while sharing applicable matrices.
+        for stage in range(self.horizon + 1):
+            if self.settings_type == 'cost':
+                updated = copy.deepcopy(self.values[stage])
+                updated['V_xx'] = current_value['V_xx'].copy()
+                if self._current_stage < self.horizon and stage < self.horizon:
+                    updated['V_yy'] = current_value['V_yy']
+                    updated['V_uu'] = current_value['V_uu']
+                self.values[stage] = updated
+            else:
+                updated = copy.deepcopy(self.values[stage])
+                updated['M'] = current_value['M'].copy()
+                updated['b'] = current_value['b'].copy()
+                if self._current_stage < self.horizon and stage < self.horizon:
+                    updated['N'] = current_value['N'].copy()
+                self.values[stage] = updated
+        self._save_current()
+
+    def _accept(self):
+        try:
+            self._save_current()
+        except (ValueError, KeyError) as error:
+            QMessageBox.warning(self, 'Invalid settings', str(error))
+            return
+        self.accept()
 
 
 class StateSpaceMatrixInput(QWidget):
@@ -647,7 +1018,14 @@ class StateSpaceMatrixInput(QWidget):
         get_matrices() -> (A, B, C, D)
     """
 
-    def __init__(self, parent=None, initial_dims: int = PLANT_DEFAULT_PARAMS['dims']):
+    def __init__(
+        self,
+        parent=None,
+        initial_dims: int = PLANT_DEFAULT_PARAMS['dims'],
+        show_noise_matrices: bool = True,
+        show_integrator_controls: bool = True,
+        allow_dimension_change: bool = True,
+    ):
         super().__init__(parent)
 
         self.dims = max(1, int(initial_dims))
@@ -660,6 +1038,7 @@ class StateSpaceMatrixInput(QWidget):
         self.spin.setMinimum(1)
         self.spin.setValue(self.dims)
         self.spin.valueChanged.connect(self.on_dims_changed)
+        self.spin.setEnabled(allow_dimension_change)
 
         lbl = QLabel('State dimension')
         top_layout = QVBoxLayout()
@@ -702,7 +1081,8 @@ class StateSpaceMatrixInput(QWidget):
         self.label_Q = QLabel('Q')
         grid.addWidget(self.label_Q, 0, 2)
         grid.addWidget(self.table_Q, 1, 2)
-        grid.addWidget(QLabel('R'), 2, 2)
+        self.label_R = QLabel('R')
+        grid.addWidget(self.label_R, 2, 2)
         grid.addWidget(self.table_R, 3, 2)
 
         top_layout.addLayout(grid)
@@ -711,6 +1091,15 @@ class StateSpaceMatrixInput(QWidget):
         self.col_width = 80
         self.resize_all(self.dims)
         self.set_use_ode_mode(False)
+        if not show_noise_matrices:
+            self.label_Q.hide()
+            self.table_Q.hide()
+            self.label_R.hide()
+            self.table_R.hide()
+        if not show_integrator_controls:
+            self.use_ode_mode_button.hide()
+            self.integrator_label.hide()
+            self.integrator_combo.hide()
 
     def set_use_ode_mode(self, use_ode_mode: bool):
         prev_method = self.integrator_method
