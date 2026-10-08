@@ -13,8 +13,8 @@ from integrators import IntegratorType
 from utils import get_logger, EPS, get_t_span, GUI_SLIDER_CONFIG
 
 
-def discretize_state_space(A, B, integration_steps, method):
-    """Discretize a continuous state-space model using the simulator's step method."""
+def discretise_state_space(A, B, integration_steps, method):
+    """Discretise a continuous state-space model using the simulator's step method."""
     state_count = A.shape[0]
     augmented_matrix = np.block([
         [A, B],
@@ -44,11 +44,11 @@ def discretize_state_space(A, B, integration_steps, method):
     return augmented_step[:state_count, :state_count], augmented_step[:state_count, state_count:]
 
 
-def discretize_process_noise(A, Q, integration_steps, method, use_ode_mode):
-    """Discretize process-noise covariance for the simulator's ODE or SDE semantics."""
+def discretise_process_noise(A, Q, integration_steps, method, use_ode_mode):
+    """Discretise process-noise covariance for the simulator's ODE or SDE semantics."""
     state_count = A.shape[0]
     if use_ode_mode:
-        _, noise_gain = discretize_state_space(
+        _, noise_gain = discretise_state_space(
             A, np.eye(state_count), integration_steps, method
         )
         return noise_gain @ Q @ noise_gain.T
