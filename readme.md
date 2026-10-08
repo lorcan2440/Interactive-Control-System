@@ -77,6 +77,5 @@ python main.py
 
 - [ ] Lead-lag compensator
 - [ ] Sliding mode control (including boundary layer smoothing) - may replace bang-bang
-- [ ] Model predictive control (solve using OSQP)
-- [ ] Neural control (using LSTM)
-- [ ] Reinforcement learning control (using DDPG)
+- [ ] Reinforcement learning control (using DDPG, TD3 and SAC)
+- [ ] Neural control (MPC using LSTM?)
