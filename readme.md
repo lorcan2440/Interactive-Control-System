@@ -8,16 +8,17 @@ https://github.com/user-attachments/assets/4b876526-36ec-4d46-a481-f202f1f5bdc2
 - [x] Feedforward control (aka open loop control)
 - [x] Bang-bang control (aka on/off control)
 - [x] PID control
-- [x] H2 optimal control (aka LQG control), with per-state performance weights
-- [x] H-infinity output-feedback control using CARE/FARE
+- [x] H2 optimal control (aka LQG control) using CARE/FARE
+- [x] H-infinity with output feedback control using CARE/FARE
+- [x] Model predictive control (MPC) with Kalman filter, using OSQP solver
 
 ## Requirements
 
-The libraries required are NumPy, SciPy, PyQt6 and PyQtGraph. 
+The libraries required are NumPy, SciPy, OSQP, PyQt6 and PyQtGraph. 
 You can install the most up-to-date versions using:
 
 ```bash
-pip install numpy scipy PyQt6 pyqtgraph
+pip install numpy scipy osqp PyQt6 pyqtgraph
 ```
 
 or see below for installing specific versions for guaranteed compatability.
