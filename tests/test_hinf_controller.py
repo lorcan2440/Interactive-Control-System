@@ -58,7 +58,7 @@ def test_default_plant_is_stabilizable_detectable_and_care_design_succeeds():
 
     assert np.allclose(
         controller.plant.Q,
-        GUI_SLIDER_CONFIG['w_process_stddev']['init'] ** 2 * np.eye(controller.plant.dims),
+        GUI_SLIDER_CONFIG['w_proc_stddev']['init'] ** 2 * np.eye(controller.plant.dims),
     )
     assert np.allclose(controller.plant.R, [[GUI_SLIDER_CONFIG['w_meas_stddev']['init'] ** 2]])
     assert controller.check_stabilisability_and_detectability() == (True, True)

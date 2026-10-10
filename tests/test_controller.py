@@ -27,6 +27,8 @@ class SimpleSim:
         y_sp=0.0,
         U_plus=1.0,
         U_minus=-1.0,
+        PID_filtered_derivative=True,
+        PID_derivative_on_measurement=True,
     ):
         self.K_p = K_p
         self.K_i = K_i
@@ -39,6 +41,8 @@ class SimpleSim:
         self.y_sp = y_sp
         self.U_plus = U_plus
         self.U_minus = U_minus
+        self.PID_filtered_derivative = PID_filtered_derivative
+        self.PID_derivative_on_measurement = PID_derivative_on_measurement
 
 
 def _make_1d_test_plant() -> Plant:
@@ -140,6 +144,66 @@ def test_pid_controller_p_i_d_terms_and_memory():
     # u_p = 2
     # u_i = 1 * (2 * 0.1) = 0.2; the measurement did not change, so u_d = 0.
     assert pytest.approx(u2[0, 0], rel=1e-9) == pytest.approx(2.2, rel=1e-9)
+
+
+@pytest.mark.parametrize(
+    ('filtered', 'on_measurement', 'expected_derivative'),
+    [
+        (True, True, 0.0),
+        (False, True, 0.0),
+        (True, False, 4.0),
+        (False, False, 20.0),
+    ],
+)
+def test_pid_derivative_options_avoid_or_apply_setpoint_kick(
+    filtered,
+    on_measurement,
+    expected_derivative,
+):
+    sim = SimpleSim(
+        K_p=0.0,
+        K_i=0.0,
+        K_d=2.0,
+        tau=0.5,
+        dt_anim=0.1,
+        y_sp=1.0,
+        PID_filtered_derivative=filtered,
+        PID_derivative_on_measurement=on_measurement,
+    )
+    controller = PIDController(sim=sim, plant=_make_1d_test_plant())
+
+    u = controller.calc_u(np.array([[1.0]]))
+
+    assert u[0, 0] == pytest.approx(expected_derivative)
+
+
+@pytest.mark.parametrize(
+    ('filtered', 'on_measurement'),
+    [(True, True), (False, True), (True, False), (False, False)],
+)
+def test_pid_transfer_functions_match_derivative_options(filtered, on_measurement):
+    sim = SimpleSim(
+        K_p=3.0,
+        K_i=4.0,
+        K_d=5.0,
+        tau=0.2,
+        PID_filtered_derivative=filtered,
+        PID_derivative_on_measurement=on_measurement,
+    )
+    controller = PIDController(sim=sim, plant=_make_1d_test_plant())
+    controller.calc_u(np.array([[0.0]]))
+    s = 2j
+
+    derivative_tf = sim.K_d * s
+    if filtered:
+        derivative_tf /= sim.tau * s + 1
+    expected_Ky = -sim.K_p - sim.K_i / s - derivative_tf
+    expected_Ksp = sim.K_p + sim.K_i / s
+    if not on_measurement:
+        expected_Ksp += derivative_tf
+
+    assert controller.K_y(s) == pytest.approx(expected_Ky)
+    assert controller.K_sp(s) == pytest.approx(expected_Ksp)
 
 
 test_openloop_controller_computes_feedforward()

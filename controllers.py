@@ -207,16 +207,16 @@ class PIDController:
     def reset_memory(self):
         '''
         Resets the internal state of the PID controller: accumulated error used in the integral term, 
-        and previous measurement and derivative action used in filtered derivative.
+        and previous derivative input and derivative action.
         '''
         self.e_integrated = np.array([[0.0]])
-        self.y_meas_prev = np.array([[0.0]])
+        self.derivative_input_prev = np.array([[0.0]])
         self.u_d_prev = np.array([[0.0]])
         self.cl_stable_prev = True
 
     def calc_u(self, e: np.ndarray) -> np.ndarray:
         """
-        Compute PID control input using P and I on the error, and a low-pass filtered derivative on the measurement.
+        Compute PID control input with optional derivative filtering and derivative-on-measurement.
         The filter is used to avoid excessive noise amplification from the derivative term. The frequency cutoff
         of the low-pass filter can be set by the (reciprocal of) the time constant `tau` in the GUI.
 
@@ -241,8 +241,11 @@ class PIDController:
         else:
             self.cl_stable_prev = False
 
-        # get measurement
+        # The derivative input is either the error (setpoint changes cause derivative action)
+        # or the negative measurement (setpoint changes do not cause derivative action).
         y_meas = self.sim.y_sp - e
+        derivative_on_measurement = getattr(self.sim, 'PID_derivative_on_measurement', True)
+        derivative_input = -y_meas if derivative_on_measurement else e
 
         # sampling period
         dt = self.sim.dt_anim
@@ -262,25 +265,31 @@ class PIDController:
         self.e_integrated += e * dt
         u_i = self.K_i * self.e_integrated
 
-        # filtered derivative on measurement
+        self.filtered_derivative = getattr(self.sim, 'PID_filtered_derivative', True)
+        self.derivative_on_measurement = derivative_on_measurement
+
+        # Derivative on either error or negative measurement. The minus sign for
+        # measurement derivative gives the same feedback action as differentiating error.
         if self.K_d == 0:
             u_d = np.array([[0.0]])
+        elif not self.filtered_derivative:
+            u_d = self.K_d * (derivative_input - self.derivative_input_prev) / dt
         else:
             # low-pass filter time constant: use user-configured `tau` when available,
             # otherwise fall back to 5x the sampling period
             # NOTE: consider setting this to 0.1x the derivative time constant K_p / K_d
             tau = getattr(self, 'tau', max(5.0 * dt, 1e-6))
 
-            # Tustin's method implementation of the first-order low-pass 
-            # filter on the derivative term, with input y and output u_d
+            # Discrete first-order low-pass filter on the derivative term.
             alpha = 1.0 - dt / tau
             alpha = max(min(alpha, 1.0), 0.0)
 
-            u_d = alpha * self.u_d_prev - (self.K_d / tau) * (y_meas - self.y_meas_prev)
+            u_d = alpha * self.u_d_prev + (self.K_d / tau) * (
+                derivative_input - self.derivative_input_prev
+            )
             self.u_d_prev = u_d
 
-        # update stored noisy measurement
-        self.y_meas_prev = y_meas
+        self.derivative_input_prev = derivative_input.copy()
 
         # total control input = P + I + D
         u = u_p + u_i + u_d
@@ -291,13 +300,21 @@ class PIDController:
         '''
         Controller transfer function (continuous-time) from y_meas to u.
         '''
-        return self.K_p * (self.T_d * s / (self.tau * s + 1) - 1 - 1 / (self.T_i * s))
+        derivative_tf = self.K_d * s
+        if getattr(self.sim, 'PID_filtered_derivative', True):
+            derivative_tf /= self.tau * s + 1
+        return -self.K_p - self.K_i / s - derivative_tf
     
     def K_sp(self, s: complex) -> complex:
         '''
         Controller transfer function (continuous-time) from y_sp to u.
         '''
-        return self.K_p * (1 + 1 / (self.T_i * s))
+        derivative_tf = 0.0
+        if not getattr(self.sim, 'PID_derivative_on_measurement', True):
+            derivative_tf = self.K_d * s
+            if getattr(self.sim, 'PID_filtered_derivative', True):
+                derivative_tf /= self.tau * s + 1
+        return self.K_p + self.K_i / s + derivative_tf
     
     def K(self, s: complex) -> np.ndarray:
 
@@ -307,7 +324,7 @@ class PIDController:
 
         The first entry is the TF from y_meas to u. The second entry is the TF from y_sp to u.
 
-        This is the form for the PID controller with filtered derivative on the measurement.
+        The derivative filter and derivative input are configured by the PID options.
         '''
 
         return np.array([[self.K_y(s), self.K_sp(s)]])  # shape: (1, 2)
@@ -350,7 +367,8 @@ class PIDController:
         # get PID controller params
         K_p, K_i, K_d, tau = float(self.sim.K_p), float(self.sim.K_i), float(self.sim.K_d), float(self.sim.tau)
         dt_anim = float(self.sim.dt_anim)
-        if tau <= 0:
+        filtered_derivative = getattr(self.sim, 'PID_filtered_derivative', True)
+        if filtered_derivative and tau <= 0:
             raise ValueError(f'PID derivative filter time constant must be > 0 (got {tau}).')
 
         integration_method = self.sim.integrator_method
@@ -393,17 +411,19 @@ class PIDController:
 
         # get discrete-time state space realisation of the PID controller
         # controller state: [integral_error, previous_measurement, derivative_output]
-        alpha = max(min(1.0 - dt_anim / tau, 1.0), 0.0)
+        alpha = max(min(1.0 - dt_anim / tau, 1.0), 0.0) if filtered_derivative else 0.0
         A_Kd = np.zeros((3, 3))
         B_Kd = np.array([[0.0], [1.0], [0.0]])
         if K_i != 0:
             A_Kd[0, 0] = 1.0
             B_Kd[0, 0] = -dt_anim
         if K_d != 0:
-            A_Kd[2, 1:] = [K_d / tau, alpha]
-            B_Kd[2, 0] = -K_d / tau
-        C_Kd = np.array([[K_i, K_d / tau, alpha]])
-        D_Kd = np.array([[-K_p - K_i * dt_anim - K_d / tau,]])
+            derivative_scale = K_d / tau if filtered_derivative else K_d / dt_anim
+            A_Kd[2, 1:] = [derivative_scale, alpha]
+            B_Kd[2, 0] = -derivative_scale
+        derivative_scale = K_d / tau if filtered_derivative else K_d / dt_anim
+        C_Kd = np.array([[K_i, derivative_scale, alpha]])
+        D_Kd = np.array([[-K_p - K_i * dt_anim - derivative_scale,]])
 
         # get closed-loop discrete-time state space A-matrix
         A_cl = np.block([

@@ -50,6 +50,36 @@ def test_discrete_stability_uses_current_simulator_gains():
     assert np.max(np.abs(poles)) > 1.0
 
 
+@pytest.mark.parametrize('filtered_derivative', [True, False])
+def test_discrete_stability_poles_are_independent_of_derivative_reference(
+    filtered_derivative,
+):
+    measurement_derivative_controller = _make_pid_controller(tau=0.24)
+    error_derivative_controller = _make_pid_controller(tau=0.24)
+    measurement_derivative_controller.sim.PID_filtered_derivative = filtered_derivative
+    error_derivative_controller.sim.PID_filtered_derivative = filtered_derivative
+    measurement_derivative_controller.sim.PID_derivative_on_measurement = True
+    error_derivative_controller.sim.PID_derivative_on_measurement = False
+
+    stable_measurement, measurement_poles = (
+        measurement_derivative_controller.is_closed_loop_stable_discrete()
+    )
+    stable_error, error_poles = error_derivative_controller.is_closed_loop_stable_discrete()
+
+    assert stable_measurement == stable_error
+    assert np.allclose(np.sort_complex(measurement_poles), np.sort_complex(error_poles))
+
+
+def test_unfiltered_discrete_stability_does_not_depend_on_tau():
+    controllers = [_make_pid_controller(tau) for tau in (0.0, 0.24)]
+    for controller in controllers:
+        controller.sim.PID_filtered_derivative = False
+
+    poles = [controller.is_closed_loop_stable_discrete()[1] for controller in controllers]
+
+    assert np.allclose(np.sort_complex(poles[0]), np.sort_complex(poles[1]))
+
+
 def test_discrete_stability_returns_result():
     controller = _make_pid_controller(tau=0.24)
 

@@ -178,6 +178,111 @@ def test_dynamics_analytic_use_ode_mode_false(plant_factory):
     assert np.allclose(x_sde, x_ode)
 
 
+def test_calc_mag_and_phase_of_tf_is_bode_ready_for_first_order_plant():
+    plant = Plant(
+        dims=1,
+        A=np.array([[-1.0]]),
+        B=np.array([[1.0]]),
+        C=np.array([[1.0]]),
+        D=np.array([[0.0]]),
+        Q=np.zeros((1, 1)),
+        R=np.zeros((1, 1)),
+    )
+    omega = np.array([0.0, 1.0, 10.0])
+    s = 1j * omega
+    expected_magnitude_db = 20 * np.log10(1 / np.sqrt(1 + omega ** 2))
+    expected_phase_deg = -np.degrees(np.arctan(omega))
+
+    for phase_wrap_around in (False, True):
+        magnitude_db, phase_deg = plant.calc_mag_and_phase_of_tf(
+            s,
+            phase_wrap_around=phase_wrap_around,
+        )
+
+        assert magnitude_db.shape == omega.shape
+        assert phase_deg.shape == omega.shape
+        assert np.allclose(magnitude_db, expected_magnitude_db)
+        assert np.allclose(phase_deg, expected_phase_deg)
+
+
+def test_calc_mag_and_phase_of_tf_supports_linear_magnitude_and_radian_phase():
+    plant = Plant(
+        dims=1,
+        A=np.array([[-1.0]]),
+        B=np.array([[1.0]]),
+        C=np.array([[1.0]]),
+        D=np.array([[0.0]]),
+        Q=np.zeros((1, 1)),
+        R=np.zeros((1, 1)),
+    )
+    omega = np.array([0.0, 1.0, 10.0])
+
+    magnitude, phase = plant.calc_mag_and_phase_of_tf(
+        1j * omega,
+        mag_in_dB=False,
+        phase_in_deg=False,
+    )
+
+    assert np.allclose(magnitude, 1 / np.sqrt(1 + omega ** 2))
+    assert np.allclose(phase, -np.arctan(omega))
+
+
+def test_calc_mag_and_phase_of_tf_unwraps_phase_beyond_principal_range():
+    plant = Plant(
+        dims=3,
+        A=np.array([
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [-1.0, -3.0, -3.0],
+        ]),
+        B=np.array([[0.0], [0.0], [1.0]]),
+        C=np.array([[1.0, 0.0, 0.0]]),
+        D=np.array([[0.0]]),
+        Q=np.zeros((3, 3)),
+        R=np.zeros((1, 1)),
+    )
+    omega = np.array([0.0, 1.0, 10.0])
+    expected_unwrapped_phase = -3 * np.degrees(np.arctan(omega))
+
+    _, unwrapped_phase = plant.calc_mag_and_phase_of_tf(
+        1j * omega,
+        phase_wrap_around=True,
+    )
+    _, principal_phase = plant.calc_mag_and_phase_of_tf(
+        1j * omega,
+        phase_wrap_around=False,
+    )
+    _, single_frequency_phase = plant.calc_mag_and_phase_of_tf(
+        10j,
+        phase_wrap_around=True,
+    )
+
+    assert np.allclose(unwrapped_phase, expected_unwrapped_phase)
+    assert -180.0 <= principal_phase[-1] <= 180.0
+    assert np.allclose(single_frequency_phase, expected_unwrapped_phase[-1:])
+
+
+def test_calc_mag_and_phase_of_tf_accumulates_db_without_raw_products():
+    plant = Plant(
+        dims=3,
+        A=np.array([
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [-1.0, -3.0, -3.0],
+        ]),
+        B=np.array([[0.0], [0.0], [1.0]]),
+        C=np.array([[1.0, 0.0, 0.0]]),
+        D=np.array([[0.0]]),
+        Q=np.zeros((3, 3)),
+        R=np.zeros((1, 1)),
+    )
+
+    magnitude_db, _ = plant.calc_mag_and_phase_of_tf(1e120j)
+
+    assert np.isfinite(magnitude_db[0])
+    assert np.isclose(magnitude_db[0], -7200.0)
+
+
 def test_integrate_dynamics_speed_comparison(plant_factory):
 
     # keep horizon at one animation frame for simplicity

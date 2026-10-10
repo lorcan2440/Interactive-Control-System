@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, \
     QButtonGroup, QDialog, QDialogButtonBox, QMessageBox, QWidget, QGridLayout, QSpinBox, QTableWidget, \
-    QTableWidgetItem, QStyledItemDelegate, QLineEdit, QComboBox, QFrame
+    QTableWidgetItem, QStyledItemDelegate, QLineEdit, QComboBox, QFrame, QCheckBox
 from PyQt6.QtCore import QByteArray, Qt
 from PyQt6.QtGui import QDoubleValidator, QPalette
 from PyQt6.QtSvgWidgets import QSvgWidget
@@ -32,9 +32,6 @@ class GUI:
     # if checked, show a 'u_sat' slider for the user to set the saturation limit for |u|
     # TODO: add buttons under the PID parameters row to set Kp, Ki, Kd based on IAE, ITAE, 
     # Ziegler-Nichols, Cohen-Coon, and pole placement, using functions implemented in controllers.py PIDController
-    # TODO: add a checkbox in the PID parameters box to enable/disable filtering on the derivative:
-    # if unchecked, the tau slider should be greyed out
-    # need to edit the function in controllers.py to respect this setting
     # TODO: add a Bode plot (shown to the right of the graphs) for the PID controller
     # TODO: add a Nyquist plot (shown to the right of the graphs) for the PID controller
     # TODO: add a Nichols plot (shown to the right of the graphs) for the PID controller
@@ -416,6 +413,7 @@ class GUI:
     def build_controller_params(self, controller_type: ControllerType):
         
         # clear current controller params box
+        self.pid_equation_widget = None
         while self.params_layout.count():
             item = self.params_layout.takeAt(0)
             widget = item.widget()
@@ -441,6 +439,11 @@ class GUI:
                 self.add_param('U_plus', 'U_plus', layout=bangbang_layout)
                 self.params_layout.addWidget(bangbang_column)
             case ControllerType.PID:
+                if not hasattr(self.sim, 'PID_filtered_derivative'):
+                    self.sim.PID_filtered_derivative = True
+                if not hasattr(self.sim, 'PID_derivative_on_measurement'):
+                    self.sim.PID_derivative_on_measurement = True
+
                 pid_parameters = QWidget()
                 pid_rows = QVBoxLayout(pid_parameters)
                 pid_rows.setContentsMargins(0, 0, 0, 0)
@@ -454,11 +457,42 @@ class GUI:
                 self.add_param('tau', 'tau', layout=bottom_row)
                 self.params_layout.addWidget(pid_parameters)
 
-                # reset PID memory button
+                derivative_options = QWidget()
+                derivative_options_layout = QVBoxLayout(derivative_options)
+                derivative_options_layout.setContentsMargins(0, 0, 0, 0)
+                self.filtered_derivative_checkbox = QCheckBox('Filtered derivative')
+                self.filtered_derivative_checkbox.setChecked(
+                    self.sim.PID_filtered_derivative
+                )
+                self.filtered_derivative_checkbox.toggled.connect(
+                    lambda enabled: self.set_pid_option('PID_filtered_derivative', enabled)
+                )
+                derivative_options_layout.addWidget(self.filtered_derivative_checkbox)
+                self.derivative_on_measurement_checkbox = QCheckBox(
+                    'Derivative on measurement'
+                )
+                self.derivative_on_measurement_checkbox.setChecked(
+                    self.sim.PID_derivative_on_measurement
+                )
+                self.derivative_on_measurement_checkbox.toggled.connect(
+                    lambda enabled: self.set_pid_option(
+                        'PID_derivative_on_measurement', enabled
+                    )
+                )
+                derivative_options_layout.addWidget(
+                    self.derivative_on_measurement_checkbox
+                )
+
+                # Keep the derivative options and memory reset together beside
+                # the PID gain sliders.
                 reset_btn = QPushButton('Reset memory')
                 reset_btn.setToolTip('Reset PID integrator and derivative history')
                 reset_btn.clicked.connect(self.sim.pid_controller.reset_memory)
-                self.params_layout.addWidget(reset_btn)
+                derivative_options_layout.addWidget(reset_btn)
+                self.params_layout.addWidget(derivative_options)
+                tau_slider, tau_label = self.controller_param_widgets['tau']
+                tau_slider.setEnabled(self.sim.PID_filtered_derivative)
+                tau_label.setEnabled(self.sim.PID_filtered_derivative)
             case ControllerType.H2:
                 h2_parameters = QWidget()
                 h2_columns = QHBoxLayout(h2_parameters)
@@ -530,11 +564,18 @@ class GUI:
         controller_equations = {
             ControllerType.OPENLOOP: ('open_loop_controller_equation.svg', 48),
             ControllerType.BANGBANG: ('bang_bang_controller_equation.svg', 60),
-            ControllerType.PID: ('PID_controller_amplitudes_equation.svg', 48),
             ControllerType.H2: ('H2_optimal_controller_equation.svg', 48),
             ControllerType.HINF: ('Hinf_optimal_controller_equation.svg', 48),
             ControllerType.MPC: ('MPC_controller_equation.svg', 72),
         }
+        if controller_type is ControllerType.PID:
+            controller_equations[ControllerType.PID] = (
+                self._pid_equation_filename(
+                    self.sim.PID_filtered_derivative,
+                    self.sim.PID_derivative_on_measurement,
+                ),
+                48,
+            )
         if controller_type in controller_equations:
             equation_filename, equation_height = controller_equations[controller_type]
             try:
@@ -548,6 +589,8 @@ class GUI:
                     str(error),
                 )
             else:
+                if controller_type is ControllerType.PID:
+                    self.pid_equation_widget = equation
                 if self.params_layout.count():
                     self.params_layout.setStretch(0, 1)
                 separator = QFrame()
@@ -583,6 +626,49 @@ class GUI:
             setattr(self.sim, key, val)
             if key == 'MPC_N':
                 self.sim.mpc_controller.ensure_horizon(int(val))
+
+    def set_pid_option(self, key: str, enabled: bool):
+        setattr(self.sim, key, enabled)
+        self.sim.pid_controller.derivative_input_prev = np.array([[0.0]])
+        self.sim.pid_controller.u_d_prev = np.array([[0.0]])
+        if key == 'PID_filtered_derivative':
+            tau_slider, tau_label = self.controller_param_widgets['tau']
+            tau_slider.setEnabled(enabled)
+            tau_label.setEnabled(enabled)
+        self.update_pid_equation()
+
+    @staticmethod
+    def _pid_equation_filename(filtered_derivative: bool, derivative_on_measurement: bool) -> str:
+        """Select the equation image matching the PID derivative configuration."""
+        if filtered_derivative and derivative_on_measurement:
+            return 'PID_filtered_derivative_on_measurement.svg'
+        if filtered_derivative:
+            return 'PID_filtered_derivative.svg'
+        if derivative_on_measurement:
+            return 'PID_derivative_on_measurement.svg'
+        return 'PID_plain.svg'
+
+    def update_pid_equation(self):
+        """Reload the displayed PID equation after either derivative option changes."""
+        if self.pid_equation_widget is None:
+            return
+
+        try:
+            self._load_equation(
+                self.params_box,
+                self.pid_equation_widget,
+                self._pid_equation_filename(
+                    self.sim.PID_filtered_derivative,
+                    self.sim.PID_derivative_on_measurement,
+                ),
+                max_height=48,
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            QMessageBox.critical(
+                self.params_box,
+                'Unable to display PID equation',
+                str(error),
+            )
 
     def set_controller(self, controller_type: ControllerType):
         # set the simulation controller type and perform any needed setup
@@ -785,10 +871,22 @@ class GUI:
     def _make_equation(
         dialog: QWidget, filename: str, max_height: int | None = None
     ):
+        svg_widget = QSvgWidget(dialog)
+        GUI._load_equation(dialog, svg_widget, filename, max_height)
+        return svg_widget
+
+    @staticmethod
+    def _load_equation(
+        dialog: QWidget,
+        svg_widget: QSvgWidget,
+        filename: str,
+        max_height: int | None = None,
+    ):
         """Load a LaTeX equation SVG. If the GUI is dark, change the colour from black to white.
 
         Args:
             dialog: The parent widget (used to get the background colour).
+            svg_widget: The widget that should render the SVG.
             filename: The name of the SVG file to load, ending in .svg, not including any folder names."""
         equation_path = Path(__file__).resolve().parent / 'media' / filename
         try:
@@ -800,7 +898,6 @@ class GUI:
         if background_color.lightness() < 128:
             svg_content = svg_content.replace('stroke="#000000" fill="#000000"', 'stroke="#FFFFFF" fill="#FFFFFF"')
 
-        svg_widget = QSvgWidget(dialog)
         svg_widget.load(QByteArray(svg_content.encode('utf-8')))
         if not svg_widget.renderer().isValid():
             raise RuntimeError(f'Qt could not render the equation SVG at {equation_path}.')
@@ -814,7 +911,6 @@ class GUI:
                 Qt.AspectRatioMode.KeepAspectRatio,
             )
         svg_widget.setFixedSize(svg_size)
-        return svg_widget
 
     def on_accept_change_plant(self, widget, dialog):
         # called when "OK" is clicked in the change plant dialog box

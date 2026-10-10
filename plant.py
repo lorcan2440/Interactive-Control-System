@@ -399,79 +399,61 @@ class Plant:
         self.y_meas = self.y + self.sample_measurement_noise(n=1)  # shape (1, 1)
         return self.y_meas
 
-    def calc_mag_and_phase_of_tf_wrapped(self, s: np.ndarray, mag_in_dB: bool = True, phase_in_deg: bool = True, 
+    def calc_mag_and_phase_of_tf(self, s: np.ndarray, mag_in_dB: bool = True, phase_in_deg: bool = True, 
                                          phase_wrap_around: bool = True) -> tuple[np.ndarray, np.ndarray]:
         '''
         Calculate the magnitude and phase of the plant transfer function G_p(s) = C @ (sI - A)^{-1} @ B + D
         for a given array of complex frequencies s. 
         
-        If used with magnitude in dB, phase in degrees, and phase wrapping around, it is suitable for direct 
-        use in a Bode plot.
+        If used with magnitude in dB, phase in degrees, and phase wrapping enabled, it is suitable for
+        direct use in a Bode plot. The accumulated phase is calculated from the individual poles and zeros,
+        so it is meaningful even when only one frequency is supplied.
 
         ### Arguments
-        - `s` (np.ndarray): array of complex frequencies. Shape: (n,) (1D array)
+        - `s` (np.ndarray | complex): complex frequency or array of complex frequencies. A scalar is treated
+        as a single-element array; otherwise, `s` must be one-dimensional.
         ### Optional
         - `mag_in_dB` (bool, default=`True`): if true, return 20 log_10 | G_p(s) | (decibel units) instead of | G_p(s) |.
         - `phase_in_deg` (bool, default=`True`): if true, return arg G(s) in degrees instead of radians.
-        - `phase_wrap_around` (bool, default=`True`): if true, allow the phase to accumulate beyond the 
-        usual 2 pi range, instead of restricting to (-pi, pi].
+        - `phase_wrap_around` (bool, default=`True`): if true, unwrap phase so it can accumulate beyond the
+        usual 2 pi range; otherwise, restrict it to the principal range (-pi, pi].
 
         ### Returns
         - `tuple[np.ndarray, np.ndarray]`: magnitude and phase of G_p(s). Both have shape: (n,)
         '''
 
         s = np.asarray(s)
+        if s.ndim == 0:
+            s = s.reshape(1)
+        if s.ndim != 1:
+            raise ValueError('s must be a complex frequency or a one-dimensional array of frequencies.')
 
-        if not phase_wrap_around:
-            # simple case: can directly evaluate
-            G_vals = self.G_p(s)
-            mag_G_vals = np.abs(G_vals)
-            if mag_in_dB:
-                mag_G_vals = 20 * np.log10(mag_G_vals)
+        # set baseline magnitude based on gain value k
+        if mag_in_dB:
+            mag_G_vals = np.full(s.shape, 20 * np.log10(np.abs(self.gain)), dtype=float)
+        else:
+            mag_G_vals = np.full(s.shape, np.abs(self.gain), dtype=float)
 
-            phase_G_vals = np.angle(G_vals, deg=phase_in_deg)
-            return mag_G_vals, phase_G_vals
-
-        # Initialise arrays for all frequency values
-        mag_G_vals = np.zeros(s.shape, dtype=float)
-        phase_G_vals = np.zeros(s.shape, dtype=float)
-
-        # Accumulate contributions from poles
-        for s_pole in self.poles:
-            distances = np.abs(s - s_pole)
-
-            if mag_in_dB:
-                mag_G_vals -= 20 * np.log10(distances)
-            else:
-                mag_G_vals -= np.log10(distances) * 0  # placeholder
-                mag_G_vals /= distances
-
-            phase_G_vals -= np.angle(
-                s - s_pole, deg=phase_in_deg
-            )
-
-        # Accumulate contributions from zeros
-        for s_zero in self.zeroes:
+        # accumulate magnitude and phase from each zero and pole independently
+        phase_G_vals = np.full(s.shape, np.angle(self.gain), dtype=float)
+        for s_zero in self.zeroes:  # (s - s_zero) -> multiply mag, add phase
             distances = np.abs(s - s_zero)
-
             if mag_in_dB:
                 mag_G_vals += 20 * np.log10(distances)
             else:
                 mag_G_vals *= distances
+            phase_G_vals += np.angle(s - s_zero)
+        for s_pole in self.poles:  # 1 / (s - s_pole) -> divide mag, subtract phase
+            distances = np.abs(s - s_pole)
+            if mag_in_dB:
+                mag_G_vals -= 20 * np.log10(distances)
+            else:
+                mag_G_vals /= distances
+            phase_G_vals -= np.angle(s - s_pole)
 
-            phase_G_vals += np.angle(
-                s - s_zero, deg=phase_in_deg
-            )
-
-        # Apply the gain factor
-        if mag_in_dB:
-            mag_G_vals += 20 * np.log10(np.abs(self.gain))
-        else:
-            mag_G_vals *= np.abs(self.gain)
-
-        # Account for negative gain
-        if self.gain < 0:
-            phase_G_vals -= 180 if phase_in_deg else np.pi
+        if not phase_wrap_around:  # restrict to (-pi, pi]
+            phase_G_vals = (phase_G_vals + np.pi) % (2 * np.pi) - np.pi
+        if phase_in_deg:
+            phase_G_vals = np.degrees(phase_G_vals)
 
         return mag_G_vals, phase_G_vals
-

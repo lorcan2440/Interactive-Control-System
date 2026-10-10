@@ -47,8 +47,4 @@ Communication and questions
 - If uncertain about the intended behavior, ask a clarifying question instead of guessing.
 - When suggesting larger refactors, present the benefits and a small plan, and request approval before implementing.
 
-Contact points
---------------
-If in doubt, open a short PR and request feedback rather than making large speculative changes.
-
 Thank you for keeping contributions clear, minimal, and consistent with the project owner's expectations.
