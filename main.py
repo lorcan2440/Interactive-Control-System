@@ -2,18 +2,21 @@
 """
 
 # built-ins
+from importlib import import_module
 import sys
 from time import perf_counter
 
 # external imports
 import numpy as np
+# Load Torch before Qt on Windows, where Qt's DLLs can prevent c10.dll from initializing.
+import_module('torch')
 from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtCore import QTimer
 
 # local imports
 from plant import Plant, IntegratorType
 from controllers import ControllerType, ManualController, OpenLoopController, BangBangController, \
-    PIDController, H2Controller, HInfinityController, ModelPredictiveController
+    PIDController, H2Controller, HInfinityController, ModelPredictiveController, RLController
 from gui import GUI
 from utils import get_logger, MAX_SIG_FIGS, LOGGING_ON, TIME_STEPS, PLANT_DEFAULT_PARAMS, \
     GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST, ANIM_SPEED_FACTOR, MAX_FRAMES_PER_TICK
@@ -97,6 +100,7 @@ class Simulation(QWidget):
         self.h2_controller = H2Controller(simulator=self, plant=self.plant)
         self.hinf_controller = HInfinityController(simulator=self, plant=self.plant)
         self.mpc_controller = ModelPredictiveController(simulator=self, plant=self.plant)
+        self.rl_controller = RLController()
 
         # set controller type
         self.controller_type = ControllerType.MANUAL
@@ -209,6 +213,8 @@ class Simulation(QWidget):
                 u = self.hinf_controller.calc_u(e)
             case ControllerType.MPC:
                 u = self.mpc_controller.calc_u(e)
+            case ControllerType.RL:
+                u = self.rl_controller.calc_u(e)
             case _:
                 raise ValueError(f'Invalid controller type: {self.controller_type}')
 

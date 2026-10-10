@@ -6,9 +6,17 @@ from pathlib import Path
 
 # external imports
 import numpy as np
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, \
+from rl import (
+    DDPGConfig,
+    OffPolicyAgent,
+    SACConfig,
+    TD3Config,
+    load_agent_policy,
+)
+from PyQt6.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, \
     QButtonGroup, QDialog, QDialogButtonBox, QMessageBox, QWidget, QGridLayout, QSpinBox, QTableWidget, \
-    QTableWidgetItem, QStyledItemDelegate, QLineEdit, QComboBox, QFrame, QCheckBox
+    QTableWidgetItem, QStyledItemDelegate, QLineEdit, QComboBox, QFrame, QCheckBox, QDoubleSpinBox, \
+    QFormLayout, QFileDialog, QStackedWidget
 from PyQt6.QtCore import QByteArray, Qt
 from PyQt6.QtGui import QDoubleValidator, QPalette
 from PyQt6.QtSvgWidgets import QSvgWidget
@@ -18,6 +26,7 @@ from pyqtgraph import GraphicsLayoutWidget, mkPen
 # local imports
 from plant import IntegratorType
 from controllers import ControllerType
+from rl_training import RLTrainingConfig, RLTrainingWorker
 from utils import make_slider_from_cfg, PLANT_DEFAULT_PARAMS, MAX_SIG_FIGS, ANIM_SPEED_FACTOR, \
     GUI_SLIDER_CONFIG, CONTROLLER_PARAMS_LIST
 
@@ -52,11 +61,31 @@ class GUI:
 
         # controller UI bookkeeping
         self.sim.controller_type = ControllerType.MANUAL
+        self._displayed_controller_type = ControllerType.MANUAL
         self.controller_param_widgets = {}
         self.is_csv_logging = False
         self.csv_log_file = None
         self.csv_writer = None
         self.csv_log_path = None
+        self.rl_worker = None
+        self.rl_advanced_dialog = None
+        self.rl_actor_episode_numbers = []
+        self.rl_critic_episode_numbers = []
+        self.rl_actor_losses = []
+        self.rl_critic_losses = []
+        self.rl_episode_rewards = []
+        self._rl_use_policy_on_finish = False
+        self.rl_initial_state_min = self.sim.plant.x_0[:, 0] - 1.0
+        self.rl_initial_state_max = self.sim.plant.x_0[:, 0] + 1.0
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.stop_rl_worker)
+
+    def stop_rl_worker(self):
+        """Stop background RL training before the Qt application exits."""
+        if self.rl_worker is not None and self.rl_worker.isRunning():
+            self.rl_worker.request_stop()
+            self.rl_worker.wait()
 
     def clear_buffers(self):
 
@@ -153,6 +182,7 @@ class GUI:
         self.radio_h2 = QRadioButton('H2')
         self.radio_hinf = QRadioButton('H∞')
         self.radio_mpc = QRadioButton('MPC')
+        self.radio_rl = QRadioButton('RL')
 
         self.controller_buttons_group.addButton(self.radio_none)
         self.controller_buttons_group.addButton(self.radio_manual)
@@ -162,6 +192,7 @@ class GUI:
         self.controller_buttons_group.addButton(self.radio_h2)
         self.controller_buttons_group.addButton(self.radio_hinf)
         self.controller_buttons_group.addButton(self.radio_mpc)
+        self.controller_buttons_group.addButton(self.radio_rl)
 
         controller_buttons_box_layout.addWidget(self.radio_none)
         controller_buttons_box_layout.addWidget(self.radio_manual)
@@ -171,6 +202,7 @@ class GUI:
         controller_buttons_box_layout.addWidget(self.radio_h2)
         controller_buttons_box_layout.addWidget(self.radio_hinf)
         controller_buttons_box_layout.addWidget(self.radio_mpc)
+        controller_buttons_box_layout.addWidget(self.radio_rl)
 
         controller_buttons_box.setLayout(controller_buttons_box_layout)
         first_row_hbox.addWidget(controller_buttons_box)
@@ -214,6 +246,7 @@ class GUI:
         self.radio_h2.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.H2))
         self.radio_hinf.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.HINF))
         self.radio_mpc.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.MPC))
+        self.radio_rl.toggled.connect(lambda on: on and self.on_controller_selected(ControllerType.RL))
 
         # initial controller selection and params
         self.radio_manual.setChecked(True)
@@ -377,9 +410,18 @@ class GUI:
         self.sim.y_sp = np.array([[sp]])
 
     def on_controller_selected(self, controller_type: ControllerType):
+        if controller_type is ControllerType.RL and self.sim.rl_controller.agent is None:
+            if controller_type is not self._displayed_controller_type:
+                self.build_controller_params(controller_type)
+            self.rl_status_label.setText(
+                f'Train or load a {self._rl_algorithm} policy. '
+                'The active controller remains unchanged until then.'
+            )
+            return
         if controller_type is not self.sim.controller_type:
             self.sim.controller_type = controller_type
             self.set_controller(controller_type)
+        if controller_type is not self._displayed_controller_type:
             self.build_controller_params(controller_type)
 
     def add_param(
@@ -413,6 +455,7 @@ class GUI:
     def build_controller_params(self, controller_type: ControllerType):
         
         # clear current controller params box
+        self._displayed_controller_type = controller_type
         self.pid_equation_widget = None
         while self.params_layout.count():
             item = self.params_layout.takeAt(0)
@@ -560,6 +603,8 @@ class GUI:
                 constraint_button.clicked.connect(self.open_mpc_constraint_dialog)
                 mpc_button_layout.addWidget(constraint_button)
                 self.params_layout.addWidget(mpc_buttons)
+            case ControllerType.RL:
+                self.build_rl_controller_params()
 
         controller_equations = {
             ControllerType.OPENLOOP: ('open_loop_controller_equation.svg', 48),
@@ -627,6 +672,626 @@ class GUI:
             if key == 'MPC_N':
                 self.sim.mpc_controller.ensure_horizon(int(val))
 
+    @staticmethod
+    def _make_rl_integer_spin(minimum: int, maximum: int, value: int) -> QSpinBox:
+        spin = QSpinBox()
+        spin.setRange(minimum, maximum)
+        spin.setValue(value)
+        return spin
+
+    @staticmethod
+    def _make_rl_float_spin(
+        minimum: float,
+        maximum: float,
+        value: float,
+        step: float = 0.01,
+        decimals: int = 6,
+    ) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setDecimals(decimals)
+        spin.setRange(minimum, maximum)
+        spin.setSingleStep(step)
+        spin.setValue(value)
+        return spin
+
+    def build_rl_controller_params(self):
+        """Build the compact RL parameter panel and advanced training dialog."""
+        if self.rl_advanced_dialog is not None:
+            self.rl_advanced_dialog.close()
+            self.rl_advanced_dialog.deleteLater()
+            self.rl_advanced_dialog = None
+
+        rl_panel = QWidget()
+        panel_layout = QVBoxLayout(rl_panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        form = QFormLayout()
+
+        self.rl_algorithm_buttons = {}
+        algorithm_selector = QWidget()
+        algorithm_layout = QHBoxLayout(algorithm_selector)
+        algorithm_layout.setContentsMargins(0, 0, 0, 0)
+        algorithm_group = QButtonGroup(algorithm_selector)
+        for algorithm in ('DDPG', 'TD3', 'SAC'):
+            radio = QRadioButton(algorithm)
+            algorithm_group.addButton(radio)
+            algorithm_layout.addWidget(radio)
+            self.rl_algorithm_buttons[algorithm] = radio
+            radio.toggled.connect(
+                lambda checked, selected=algorithm: checked
+                and self.on_rl_algorithm_selected(selected)
+            )
+        self._rl_algorithm = getattr(self, '_rl_algorithm', 'DDPG')
+        self.rl_algorithm_buttons[self._rl_algorithm].setChecked(True)
+        form.addRow('Algorithm', algorithm_selector)
+
+        self.rl_action_min_spin = self._make_rl_float_spin(-1e6, 1e6, -4.0)
+        self.rl_action_max_spin = self._make_rl_float_spin(-1e6, 1e6, 4.0)
+        action_bounds = QWidget()
+        action_layout = QHBoxLayout(action_bounds)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.addWidget(QLabel('U_min'))
+        action_layout.addWidget(self.rl_action_min_spin)
+        action_layout.addWidget(QLabel('U_max'))
+        action_layout.addWidget(self.rl_action_max_spin)
+        form.addRow('Action bounds', action_bounds)
+
+        self.rl_initial_state_button = QPushButton('Set random initial-state bounds')
+        self.rl_initial_state_button.clicked.connect(self.open_rl_initial_state_dialog)
+        form.addRow('Initial conditions', self.rl_initial_state_button)
+
+        self.rl_setpoint_changes_spin = self._make_rl_integer_spin(0, 100, 1)
+        self.rl_setpoint_changes_spin.setToolTip(
+            'Changes are spread through each episode. Changes made while paused '
+            'are applied when training resumes.'
+        )
+        form.addRow('Setpoint changes per episode', self.rl_setpoint_changes_spin)
+
+        self.rl_episode_count_spin = self._make_rl_integer_spin(1, 100_000, 500)
+        form.addRow('Training episodes', self.rl_episode_count_spin)
+        self.rl_steps_spin = self._make_rl_integer_spin(1, 100_000, 600)
+        form.addRow('Frames per episode', self.rl_steps_spin)
+
+        self.rl_advanced_button = QPushButton('Training settings and progress…')
+        self.rl_advanced_button.clicked.connect(self.open_rl_training_dialog)
+        form.addRow('Training', self.rl_advanced_button)
+        panel_layout.addLayout(form)
+        self.params_layout.addWidget(rl_panel)
+
+        self.rl_layers_spin = self._make_rl_integer_spin(1, 10, 2)
+        self.rl_neurons_spin = self._make_rl_integer_spin(1, 1024, 128)
+        self.rl_activation_combo = QComboBox()
+        self.rl_activation_combo.addItems(['ReLU', 'Tanh', 'Sigmoid', 'Softmax'])
+        architecture = QWidget()
+        architecture_layout = QHBoxLayout(architecture)
+        architecture_layout.setContentsMargins(0, 0, 0, 0)
+        architecture_layout.addWidget(QLabel('Layers'))
+        architecture_layout.addWidget(self.rl_layers_spin)
+        architecture_layout.addWidget(QLabel('Neurons/layer'))
+        architecture_layout.addWidget(self.rl_neurons_spin)
+        architecture_layout.addWidget(QLabel('Hidden activation'))
+        architecture_layout.addWidget(self.rl_activation_combo)
+
+        self.rl_actor_lr_spin = self._make_rl_float_spin(1e-8, 1.0, 1e-4, 1e-4)
+        self.rl_critic_lr_spin = self._make_rl_float_spin(1e-8, 1.0, 1e-3, 1e-4)
+        self.rl_gamma_spin = self._make_rl_float_spin(0.0, 1.0, 0.99, 0.01)
+        self.rl_tau_spin = self._make_rl_float_spin(1e-6, 1.0, 0.005, 0.001)
+        self.rl_batch_spin = self._make_rl_integer_spin(1, 65_536, 128)
+        self.rl_replay_spin = self._make_rl_integer_spin(1, 1_000_000, 100_000)
+        self.rl_learning_starts_spin = self._make_rl_integer_spin(0, 1_000_000, 1_000)
+        self.rl_seed_spin = self._make_rl_integer_spin(0, 2_147_483_647, 0)
+        self.rl_ddpg_noise_spin = self._make_rl_float_spin(0.0, 1e6, 0.1, 0.01)
+        self.rl_td3_exploration_noise_spin = self._make_rl_float_spin(0.0, 1e6, 0.1, 0.01)
+        self.rl_td3_target_noise_spin = self._make_rl_float_spin(0.0, 1e6, 0.2, 0.01)
+        self.rl_td3_noise_clip_spin = self._make_rl_float_spin(0.0, 1e6, 0.5, 0.01)
+        self.rl_td3_policy_delay_spin = self._make_rl_integer_spin(1, 100, 2)
+        self.rl_sac_alpha_spin = self._make_rl_float_spin(1e-8, 1e6, 0.2, 0.01)
+        self.rl_sac_auto_alpha_checkbox = QCheckBox('Tune entropy coefficient automatically')
+        self.rl_sac_auto_alpha_checkbox.setChecked(True)
+        self.rl_sac_target_entropy_spin = self._make_rl_float_spin(-1e6, 1e6, -1.0, 0.1)
+        self.rl_sac_alpha_lr_spin = self._make_rl_float_spin(1e-8, 1.0, 3e-4, 1e-4)
+
+        self.rl_fixed_widgets = [
+            self.rl_action_min_spin,
+            self.rl_action_max_spin,
+            self.rl_initial_state_button,
+            self.rl_episode_count_spin,
+            self.rl_steps_spin,
+            self.rl_setpoint_changes_spin,
+            self.rl_advanced_button,
+            self.rl_layers_spin,
+            self.rl_neurons_spin,
+            self.rl_activation_combo,
+            self.rl_actor_lr_spin,
+            self.rl_critic_lr_spin,
+            self.rl_gamma_spin,
+            self.rl_tau_spin,
+            self.rl_batch_spin,
+            self.rl_replay_spin,
+            self.rl_learning_starts_spin,
+            self.rl_seed_spin,
+            self.rl_ddpg_noise_spin,
+            self.rl_td3_exploration_noise_spin,
+            self.rl_td3_target_noise_spin,
+            self.rl_td3_noise_clip_spin,
+            self.rl_td3_policy_delay_spin,
+            self.rl_sac_alpha_spin,
+            self.rl_sac_auto_alpha_checkbox,
+            self.rl_sac_target_entropy_spin,
+            self.rl_sac_alpha_lr_spin,
+        ]
+        hyperparameter_form = QFormLayout()
+        hyperparameter_form.setContentsMargins(0, 0, 0, 0)
+        hyperparameter_form.addRow('Actor learning rate', self.rl_actor_lr_spin)
+        hyperparameter_form.addRow('Critic learning rate', self.rl_critic_lr_spin)
+        hyperparameter_form.addRow('Discount factor γ', self.rl_gamma_spin)
+        hyperparameter_form.addRow('Target update rate τ', self.rl_tau_spin)
+        hyperparameter_form.addRow('Batch size', self.rl_batch_spin)
+        hyperparameter_form.addRow('Replay capacity', self.rl_replay_spin)
+        hyperparameter_form.addRow('Random warm-up transitions', self.rl_learning_starts_spin)
+        hyperparameter_form.addRow('Random seed', self.rl_seed_spin)
+
+        dialog = QDialog(self.sim)
+        dialog.setWindowTitle('RL Training and Progress')
+        dialog.setMinimumWidth(680)
+        dialog_layout = QVBoxLayout(dialog)
+        architecture_group = QGroupBox('Network architecture')
+        architecture_form = QFormLayout(architecture_group)
+        architecture_form.addRow(architecture)
+        dialog_layout.addWidget(architecture_group)
+
+        hyperparameters_group = QGroupBox('Shared training hyperparameters')
+        hyperparameters_group.setLayout(hyperparameter_form)
+        dialog_layout.addWidget(hyperparameters_group)
+
+        self.rl_algorithm_settings = QStackedWidget()
+        self.rl_algorithm_settings.setObjectName('rlAlgorithmSettings')
+        ddpg_settings = QWidget()
+        ddpg_form = QFormLayout(ddpg_settings)
+        ddpg_form.addRow('Exploration noise σ', self.rl_ddpg_noise_spin)
+        self.rl_algorithm_settings.addWidget(ddpg_settings)
+        td3_settings = QWidget()
+        td3_form = QFormLayout(td3_settings)
+        td3_form.addRow('Exploration noise σ', self.rl_td3_exploration_noise_spin)
+        td3_form.addRow('Target policy noise σ', self.rl_td3_target_noise_spin)
+        td3_form.addRow('Target noise clip', self.rl_td3_noise_clip_spin)
+        td3_form.addRow('Policy update delay', self.rl_td3_policy_delay_spin)
+        self.rl_algorithm_settings.addWidget(td3_settings)
+        sac_settings = QWidget()
+        sac_form = QFormLayout(sac_settings)
+        sac_form.addRow('Initial entropy coefficient α', self.rl_sac_alpha_spin)
+        sac_form.addRow(self.rl_sac_auto_alpha_checkbox)
+        sac_form.addRow('Target entropy', self.rl_sac_target_entropy_spin)
+        sac_form.addRow('Entropy learning rate', self.rl_sac_alpha_lr_spin)
+        self.rl_algorithm_settings.addWidget(sac_settings)
+        self.rl_sac_auto_alpha_checkbox.toggled.connect(
+            lambda checked: (
+                self.rl_sac_target_entropy_spin.setEnabled(checked),
+                self.rl_sac_alpha_lr_spin.setEnabled(checked),
+            )
+        )
+        algorithm_settings_group = QGroupBox('Algorithm-specific hyperparameters')
+        algorithm_settings_layout = QVBoxLayout(algorithm_settings_group)
+        algorithm_settings_layout.addWidget(self.rl_algorithm_settings)
+        dialog_layout.addWidget(algorithm_settings_group)
+
+        training_controls = QWidget()
+        training_layout = QHBoxLayout(training_controls)
+        training_layout.setContentsMargins(0, 0, 0, 0)
+        self.rl_training_button = QPushButton('Start training')
+        self.rl_training_button.clicked.connect(self.on_rl_training_button_clicked)
+        training_layout.addWidget(self.rl_training_button)
+        self.rl_stop_button = QPushButton('Stop training and use policy')
+        self.rl_stop_button.setEnabled(False)
+        self.rl_stop_button.clicked.connect(self.stop_rl_training)
+        training_layout.addWidget(self.rl_stop_button)
+        self.rl_save_button = QPushButton('Save policy')
+        self.rl_save_button.clicked.connect(self.save_rl_policy)
+        training_layout.addWidget(self.rl_save_button)
+        self.rl_load_button = QPushButton('Load policy')
+        self.rl_load_button.clicked.connect(self.load_rl_policy)
+        training_layout.addWidget(self.rl_load_button)
+        dialog_layout.addWidget(training_controls)
+
+        self.rl_status_label = QLabel('Configure an RL algorithm and start training.')
+        dialog_layout.addWidget(self.rl_status_label)
+
+        loss_plots = QWidget()
+        loss_layout = QHBoxLayout(loss_plots)
+        loss_layout.setContentsMargins(0, 0, 0, 0)
+        self.rl_actor_plot = pg.PlotWidget(title='Actor loss')
+        self.rl_actor_plot.setMinimumHeight(110)
+        self.rl_actor_plot.setLabel('bottom', 'Episode')
+        self.rl_actor_plot.setLabel('left', 'Loss')
+        self.rl_actor_curve = self.rl_actor_plot.plot(pen=pg.mkPen('c', width=2))
+        self.rl_critic_plot = pg.PlotWidget(title='Critic loss')
+        self.rl_critic_plot.setMinimumHeight(110)
+        self.rl_critic_plot.setLabel('bottom', 'Episode')
+        self.rl_critic_plot.setLabel('left', 'Loss')
+        self.rl_critic_curve = self.rl_critic_plot.plot(pen=pg.mkPen('y', width=2))
+        loss_layout.addWidget(self.rl_actor_plot)
+        loss_layout.addWidget(self.rl_critic_plot)
+        dialog_layout.addWidget(loss_plots)
+        self.rl_advanced_dialog = dialog
+
+        self.rl_setpoint_changes_spin.setValue(
+            getattr(self, '_rl_pending_setpoint_changes', 1)
+        )
+        self.rl_setpoint_changes_spin.valueChanged.connect(
+            self.on_rl_setpoint_change_count_changed
+        )
+        self._set_rl_controls_enabled(self.rl_worker is None or not self.rl_worker.isRunning())
+        self._set_rl_compact_controls_enabled(
+            self.rl_worker is None or not self.rl_worker.isRunning()
+        )
+        self.rl_stop_button.setEnabled(
+            self.rl_worker is not None and self.rl_worker.isRunning()
+        )
+        self.on_rl_algorithm_selected(self._rl_algorithm)
+
+    def open_rl_training_dialog(self):
+        """Show the persistent RL configuration and progress window."""
+        if self.rl_advanced_dialog is not None:
+            self.rl_advanced_dialog.show()
+            self.rl_advanced_dialog.raise_()
+            self.rl_advanced_dialog.activateWindow()
+
+    def on_rl_algorithm_selected(self, algorithm: str):
+        """Keep algorithm-specific settings aligned with the selected radio button."""
+        self._rl_algorithm = algorithm
+        settings = getattr(self, 'rl_algorithm_settings', None)
+        if settings is not None:
+            settings.setCurrentIndex(('DDPG', 'TD3', 'SAC').index(algorithm))
+        if hasattr(self, 'rl_sac_auto_alpha_checkbox'):
+            auto_tune = self.rl_sac_auto_alpha_checkbox.isChecked()
+            self.rl_sac_target_entropy_spin.setEnabled(auto_tune)
+            self.rl_sac_alpha_lr_spin.setEnabled(auto_tune)
+        if (
+            hasattr(self, 'rl_status_label')
+            and self.sim.rl_controller.agent is None
+            and (self.rl_worker is None or not self.rl_worker.isRunning())
+        ):
+            self.rl_status_label.setText(
+                f'Train or load a {algorithm} policy. '
+                'The active controller remains unchanged until then.'
+            )
+
+    def _set_rl_compact_controls_enabled(self, enabled: bool):
+        for widget in (
+            self.rl_action_min_spin,
+            self.rl_action_max_spin,
+            self.rl_initial_state_button,
+            self.rl_episode_count_spin,
+            self.rl_steps_spin,
+            self.rl_advanced_button,
+            *self.rl_algorithm_buttons.values(),
+        ):
+            widget.setEnabled(enabled)
+
+    def open_rl_initial_state_dialog(self):
+        """Edit uniform sampling bounds for every hidden plant state."""
+        dialog = QDialog(self.sim)
+        dialog.setWindowTitle('Random RL initial-state bounds')
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        lower_inputs = []
+        upper_inputs = []
+        for index in range(self.sim.plant.dims):
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            lower = self._make_rl_float_spin(-1e12, 1e12, self.rl_initial_state_min[index])
+            upper = self._make_rl_float_spin(-1e12, 1e12, self.rl_initial_state_max[index])
+            row_layout.addWidget(QLabel('Min'))
+            row_layout.addWidget(lower)
+            row_layout.addWidget(QLabel('Max'))
+            row_layout.addWidget(upper)
+            form.addRow(f'x_{index + 1}', row)
+            lower_inputs.append(lower)
+            upper_inputs.append(upper)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            lower_bounds = np.array([spin.value() for spin in lower_inputs])
+            upper_bounds = np.array([spin.value() for spin in upper_inputs])
+            if np.any(lower_bounds > upper_bounds):
+                QMessageBox.warning(
+                    dialog,
+                    'Invalid initial-state bounds',
+                    'Each minimum must be less than or equal to its maximum.',
+                )
+                return
+            self.rl_initial_state_min = lower_bounds
+            self.rl_initial_state_max = upper_bounds
+            self.rl_initial_state_button.setText(
+                'Initial-state bounds set'
+            )
+
+    def on_rl_setpoint_change_count_changed(self, count: int):
+        self._rl_pending_setpoint_changes = count
+        if self.rl_worker is not None and self.rl_worker.isRunning():
+            self.rl_worker.update_setpoint_change_count(count)
+
+    def _collect_rl_training_config(self) -> RLTrainingConfig:
+        action_min = self.rl_action_min_spin.value()
+        action_max = self.rl_action_max_spin.value()
+        common = dict(
+            action_min=action_min,
+            action_max=action_max,
+            hidden_layers=self.rl_layers_spin.value(),
+            neurons=self.rl_neurons_spin.value(),
+            activation=self.rl_activation_combo.currentText(),
+            actor_learning_rate=self.rl_actor_lr_spin.value(),
+            critic_learning_rate=self.rl_critic_lr_spin.value(),
+            discount_factor=self.rl_gamma_spin.value(),
+            target_update_rate=self.rl_tau_spin.value(),
+            batch_size=self.rl_batch_spin.value(),
+            replay_capacity=self.rl_replay_spin.value(),
+            learning_starts=self.rl_learning_starts_spin.value(),
+        )
+        match self._rl_algorithm:
+            case 'DDPG':
+                agent_config = DDPGConfig(
+                    **common,
+                    exploration_noise_std=self.rl_ddpg_noise_spin.value(),
+                )
+            case 'TD3':
+                agent_config = TD3Config(
+                    **common,
+                    exploration_noise_std=self.rl_td3_exploration_noise_spin.value(),
+                    target_policy_noise_std=self.rl_td3_target_noise_spin.value(),
+                    target_noise_clip=self.rl_td3_noise_clip_spin.value(),
+                    policy_delay=self.rl_td3_policy_delay_spin.value(),
+                )
+            case 'SAC':
+                agent_config = SACConfig(
+                    **common,
+                    initial_entropy_coefficient=self.rl_sac_alpha_spin.value(),
+                    automatic_entropy_tuning=self.rl_sac_auto_alpha_checkbox.isChecked(),
+                    target_entropy=self.rl_sac_target_entropy_spin.value(),
+                    entropy_learning_rate=self.rl_sac_alpha_lr_spin.value(),
+                )
+            case _:
+                raise ValueError(f'Unsupported RL algorithm: {self._rl_algorithm}.')
+        return RLTrainingConfig(
+            algorithm=self._rl_algorithm,
+            agent_config=agent_config,
+            initial_state_min=self.rl_initial_state_min.copy(),
+            initial_state_max=self.rl_initial_state_max.copy(),
+            setpoint_min=GUI_SLIDER_CONFIG['y_sp']['min'],
+            setpoint_max=GUI_SLIDER_CONFIG['y_sp']['max'],
+            episode_count=self.rl_episode_count_spin.value(),
+            steps_per_episode=self.rl_steps_spin.value(),
+            setpoint_changes_per_episode=self.rl_setpoint_changes_spin.value(),
+            seed=self.rl_seed_spin.value(),
+        )
+
+    def on_rl_training_button_clicked(self):
+        worker = self.rl_worker
+        if worker is not None and worker.isRunning():
+            if worker.is_paused:
+                worker.resume(self.rl_setpoint_changes_spin.value())
+                self.rl_training_button.setText('Pause training')
+                self.rl_status_label.setText('Training resumed.')
+            else:
+                worker.request_pause()
+                self.rl_training_button.setText('Pausing…')
+                self.rl_training_button.setEnabled(False)
+            return
+
+        try:
+            config = self._collect_rl_training_config()
+            config.validate()
+        except (ValueError, TypeError) as error:
+            QMessageBox.warning(self.params_box, 'Invalid RL configuration', str(error))
+            return
+
+        self.rl_actor_episode_numbers.clear()
+        self.rl_critic_episode_numbers.clear()
+        self.rl_episode_rewards.clear()
+        self.rl_actor_losses.clear()
+        self.rl_critic_losses.clear()
+        self.rl_actor_curve.setData([], [])
+        self.rl_critic_curve.setData([], [])
+        self.rl_setpoint_changes_spin.setEnabled(False)
+        self._set_rl_controls_enabled(False)
+        self._set_rl_compact_controls_enabled(False)
+        worker = RLTrainingWorker(
+            self.sim.plant,
+            self.sim.integrator_method,
+            self.sim.use_ode_mode,
+            config,
+            parent=self.sim,
+        )
+        self.rl_worker = worker
+        worker.episode_completed.connect(self.on_rl_episode_completed)
+        worker.paused_changed.connect(self.on_rl_pause_state_changed)
+        worker.status_changed.connect(self.rl_status_label.setText)
+        worker.training_failed.connect(self.on_rl_training_failed)
+        worker.policy_ready.connect(self.on_rl_policy_ready)
+        worker.finished.connect(self.on_rl_training_finished)
+        worker.start()
+        self.rl_training_button.setText('Pause training')
+        self.rl_stop_button.setEnabled(True)
+        self.rl_status_label.setText(
+            f'{self._rl_algorithm} training started on an independent noisy plant.'
+        )
+        self._set_rl_shared_controls_enabled(False)
+
+    def _set_rl_controls_enabled(self, enabled: bool):
+        for widget in getattr(self, 'rl_fixed_widgets', []):
+            widget.setEnabled(enabled)
+        self.rl_setpoint_changes_spin.setEnabled(enabled)
+        self.rl_save_button.setEnabled(
+            enabled and self.sim.rl_controller.agent is not None
+        )
+        self.rl_load_button.setEnabled(enabled)
+
+    def _set_rl_shared_controls_enabled(self, enabled: bool):
+        for button in (
+            self.radio_none,
+            self.radio_manual,
+            self.radio_openloop,
+            self.radio_bangbang,
+            self.radio_pid,
+            self.radio_h2,
+            self.radio_hinf,
+            self.radio_mpc,
+            self.radio_rl,
+            self.change_plant_button,
+        ):
+            button.setEnabled(enabled)
+
+    def on_rl_pause_state_changed(self, paused: bool):
+        self.rl_training_button.setEnabled(True)
+        self.rl_training_button.setText(
+            'Resume training' if paused else 'Pause training'
+        )
+        self.rl_setpoint_changes_spin.setEnabled(paused)
+        if paused:
+            self.rl_status_label.setText(
+                'Training paused. Setpoint-change count will apply after resume.'
+            )
+
+    def on_rl_episode_completed(
+        self,
+        episode: int,
+        reward: float,
+        actor_loss: float,
+        critic_loss: float,
+    ):
+        self.rl_episode_rewards.append(reward)
+        if np.isfinite(actor_loss):
+            self.rl_actor_episode_numbers.append(episode)
+            self.rl_actor_losses.append(actor_loss)
+            self.rl_actor_curve.setData(
+                self.rl_actor_episode_numbers, self.rl_actor_losses
+            )
+        if np.isfinite(critic_loss):
+            self.rl_critic_episode_numbers.append(episode)
+            self.rl_critic_losses.append(critic_loss)
+            self.rl_critic_curve.setData(
+                self.rl_critic_episode_numbers, self.rl_critic_losses
+            )
+        actor_summary = f'{actor_loss:.4g}' if np.isfinite(actor_loss) else 'updating periodically'
+        critic_summary = f'{critic_loss:.4g}' if np.isfinite(critic_loss) else 'warming up'
+        loss_summary = f'actor loss {actor_summary}, critic loss {critic_summary}'
+        self.rl_status_label.setText(f'Episode {episode}: reward {reward:.4g}, {loss_summary}')
+
+    def on_rl_training_failed(self, message: str):
+        self.rl_status_label.setText(f'Training failed: {message}')
+        QMessageBox.critical(self.params_box, 'RL training failed', message)
+
+    def on_rl_policy_ready(self, agent: OffPolicyAgent, trained: bool):
+        if trained:
+            self.sim.rl_controller.set_agent(agent)
+            self.radio_rl.setEnabled(True)
+            self.rl_save_button.setEnabled(True)
+            self.rl_status_label.setText('Training complete; trained policy is ready.')
+        else:
+            self.rl_status_label.setText(
+                'No gradient updates completed; no new trained policy is available.'
+            )
+
+    def on_rl_training_finished(self):
+        self._set_rl_shared_controls_enabled(True)
+        self._set_rl_controls_enabled(True)
+        self._set_rl_compact_controls_enabled(True)
+        self.rl_stop_button.setEnabled(False)
+        self.rl_training_button.setEnabled(True)
+        self.rl_training_button.setText('Start training')
+        use_policy = self._rl_use_policy_on_finish or self.radio_rl.isChecked()
+        self._rl_use_policy_on_finish = False
+        if use_policy:
+            if self.sim.rl_controller.agent is not None:
+                self.set_controller(ControllerType.RL)
+                self.rl_status_label.setText(
+                    'Training ended; the policy is now controlling the visible simulator.'
+                )
+            else:
+                self.rl_status_label.setText(
+                    'Training stopped before a policy was trained; no RL controller is available.'
+                )
+
+    def stop_rl_training(self):
+        if self.rl_worker is not None and self.rl_worker.isRunning():
+            self._rl_use_policy_on_finish = True
+            self.rl_worker.request_stop()
+            self.rl_stop_button.setEnabled(False)
+            self.rl_training_button.setEnabled(False)
+            self.rl_status_label.setText('Stopping after the current environment step…')
+
+    def save_rl_policy(self):
+        agent = self.sim.rl_controller.agent
+        if agent is None:
+            QMessageBox.warning(self.params_box, 'No RL policy', 'Train or load a policy first.')
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self.params_box,
+            'Save RL policy',
+            f'{self._rl_algorithm.lower()}_policy.pt',
+            'PyTorch policy (*.pt)',
+        )
+        if not path:
+            return
+        try:
+            agent.save_policy(path)
+        except (OSError, RuntimeError, ValueError) as error:
+            QMessageBox.critical(self.params_box, 'Unable to save policy', str(error))
+            return
+        self.rl_status_label.setText(f'Policy saved to {path}')
+
+    def load_rl_policy(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self.params_box,
+            'Load RL policy',
+            '',
+            'PyTorch policy (*.pt)',
+        )
+        if not path:
+            return
+        try:
+            agent = load_agent_policy(path)
+        except (OSError, RuntimeError, ValueError, TypeError) as error:
+            QMessageBox.critical(self.params_box, 'Unable to load policy', str(error))
+            return
+        self.sim.rl_controller.set_agent(agent)
+        self.rl_action_min_spin.setValue(agent.config.action_min)
+        self.rl_action_max_spin.setValue(agent.config.action_max)
+        self.rl_layers_spin.setValue(agent.config.hidden_layers)
+        self.rl_neurons_spin.setValue(agent.config.neurons)
+        self.rl_activation_combo.setCurrentText(agent.config.activation)
+        self.rl_algorithm_buttons[agent.algorithm].setChecked(True)
+        self.rl_actor_lr_spin.setValue(agent.config.actor_learning_rate)
+        self.rl_critic_lr_spin.setValue(agent.config.critic_learning_rate)
+        self.rl_gamma_spin.setValue(agent.config.discount_factor)
+        self.rl_tau_spin.setValue(agent.config.target_update_rate)
+        self.rl_batch_spin.setValue(agent.config.batch_size)
+        self.rl_replay_spin.setValue(agent.config.replay_capacity)
+        self.rl_learning_starts_spin.setValue(agent.config.learning_starts)
+        if agent.algorithm == 'DDPG':
+            self.rl_ddpg_noise_spin.setValue(agent.config.exploration_noise_std)
+        elif agent.algorithm == 'TD3':
+            self.rl_td3_exploration_noise_spin.setValue(agent.config.exploration_noise_std)
+            self.rl_td3_target_noise_spin.setValue(agent.config.target_policy_noise_std)
+            self.rl_td3_noise_clip_spin.setValue(agent.config.target_noise_clip)
+            self.rl_td3_policy_delay_spin.setValue(agent.config.policy_delay)
+        elif agent.algorithm == 'SAC':
+            self.rl_sac_alpha_spin.setValue(agent.config.initial_entropy_coefficient)
+            self.rl_sac_auto_alpha_checkbox.setChecked(agent.config.automatic_entropy_tuning)
+            self.rl_sac_target_entropy_spin.setValue(agent.config.target_entropy)
+            self.rl_sac_alpha_lr_spin.setValue(agent.config.entropy_learning_rate)
+        self.radio_rl.setEnabled(True)
+        self.rl_save_button.setEnabled(True)
+        if self.radio_rl.isChecked():
+            self.set_controller(ControllerType.RL)
+        self.rl_status_label.setText(f'Loaded policy from {path}')
+
     def set_pid_option(self, key: str, enabled: bool):
         setattr(self.sim, key, enabled)
         self.sim.pid_controller.derivative_input_prev = np.array([[0.0]])
@@ -693,6 +1358,10 @@ class GUI:
             case ControllerType.MPC:
                 self.sim.controller_type = ControllerType.MPC
                 self.sim.mpc_controller.reset_memory()
+            case ControllerType.RL:
+                if self.sim.rl_controller.agent is None:
+                    raise RuntimeError('Train or load a policy before selecting RL control.')
+                self.sim.controller_type = ControllerType.RL
 
     def _show_mpc_dialog(self, dialog):
         """Pause simulation during a modal MPC settings dialog."""
@@ -971,6 +1640,10 @@ class GUI:
             self.build_controller_params(ControllerType.HINF)
         if self.sim.mpc_controller.A_hat.shape != self.sim.plant.A.shape:
             self.sim.mpc_controller.reset_for_state_dimension()
+        if self.rl_initial_state_min.shape != (self.sim.plant.dims,):
+            self.rl_initial_state_min = self.sim.plant.x_0[:, 0] - 1.0
+            self.rl_initial_state_max = self.sim.plant.x_0[:, 0] + 1.0
+            self.rl_initial_state_button.setText('Set random initial-state bounds')
         if self.sim.controller_type is ControllerType.MPC:
             self.sim.mpc_controller.reset_memory()
             self.build_controller_params(ControllerType.MPC)

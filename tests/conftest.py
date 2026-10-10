@@ -3,8 +3,13 @@ if __name__ == "__main__":
     import __init__  # noqa
 
 # external imports
+from importlib import import_module
+
 import pytest
 import numpy as np
+
+# Load Torch before plant imports Qt through utils on Windows.
+import_module('torch')
 
 # local imports
 from plant import Plant

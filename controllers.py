@@ -80,6 +80,7 @@ class ControllerType(Enum):
     H2 = auto()
     HINF = auto()
     MPC = auto()
+    RL = auto()
     
     def __str__(self):
         """Return the string representation for display purposes"""
@@ -185,6 +186,29 @@ class BangBangController:
         else:
             u = np.array([[0.0]])
         return u
+
+
+class RLController:
+    """Run a trained continuous-action reinforcement-learning policy."""
+
+    def __init__(self):
+        self.agent = None
+
+    def set_agent(self, agent):
+        self.agent = agent
+
+    def calc_u(self, e: np.ndarray) -> np.ndarray:
+        if self.agent is None:
+            raise RuntimeError('Train or load an RL policy before selecting the RL controller.')
+        if not isinstance(e, np.ndarray) or e.shape != (1, 1):
+            raise ValueError('e must have shape (1, 1)')
+        action = self.agent.select_action(e.reshape(-1))
+        action = np.clip(
+            action,
+            self.agent.config.action_min,
+            self.agent.config.action_max,
+        )
+        return np.asarray(action, dtype=float).reshape(1, 1)
 
 
 class PIDController:
