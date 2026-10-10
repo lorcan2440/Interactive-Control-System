@@ -11,6 +11,15 @@ https://github.com/user-attachments/assets/4b876526-36ec-4d46-a481-f202f1f5bdc2
 - [x] H2 optimal control (aka LQG control) using CARE/FARE
 - [x] H-infinity with output feedback control using CARE/FARE
 - [x] Model predictive control (MPC) with Kalman filter, using OSQP solver
+- [x] Reinforcement Learning (RL) based controllers: DDPG, TD3 and SAC
+
+RL training rewards setpoint tracking while penalizing control effort and abrupt
+control changes:
+
+`r = -(e / E_scale)^2 - lambda_u * (u / U_scale)^2 - lambda_delta_u * ((u - u_previous) / U_scale)^2`
+
+The error/action scales and penalty weights are editable in the RL controller
+parameters.
 
 ## Requirements
 
@@ -77,5 +86,4 @@ python main.py
 
 - [ ] Lead-lag compensator
 - [ ] Sliding mode control (including boundary layer smoothing) - may replace bang-bang
-- [ ] Reinforcement learning control (using DDPG, TD3 and SAC)
-- [ ] Neural control (MPC using LSTM?)
+- [ ] Neural control (MPC using LSTM, using autograd for optimisation?)

@@ -35,6 +35,10 @@ class RLTrainingConfig:
     steps_per_episode: int = 600
     setpoint_changes_per_episode: int = 1
     seed: int = 0
+    e_scale: float = 1.0
+    u_scale: float = 4.0
+    lambda_u: float = 0.01
+    lambda_delta_u: float = 0.01
 
     def validate(self):
         agent_configs = {
@@ -57,6 +61,14 @@ class RLTrainingConfig:
             raise ValueError('Setpoint changes per episode cannot be negative.')
         if self.setpoint_min > self.setpoint_max:
             raise ValueError('Setpoint minimum cannot exceed its maximum.')
+        if not np.isfinite(self.e_scale) or self.e_scale <= 0:
+            raise ValueError('Error scale must be finite and positive.')
+        if not np.isfinite(self.u_scale) or self.u_scale <= 0:
+            raise ValueError('Action scale must be finite and positive.')
+        if not np.isfinite(self.lambda_u) or self.lambda_u < 0:
+            raise ValueError('Control-effort weight must be finite and non-negative.')
+        if not np.isfinite(self.lambda_delta_u) or self.lambda_delta_u < 0:
+            raise ValueError('Action-change weight must be finite and non-negative.')
         lower = np.asarray(self.initial_state_min)
         upper = np.asarray(self.initial_state_max)
         if lower.shape != upper.shape or lower.ndim != 1 or lower.size < 1:
@@ -76,6 +88,10 @@ class NoisyPlantEpisode:
         integrator_method: IntegratorType,
         use_ode_mode: bool,
         rng: np.random.Generator,
+        e_scale: float = 1.0,
+        u_scale: float = 4.0,
+        lambda_u: float = 0.01,
+        lambda_delta_u: float = 0.01,
     ):
         self.plant = Plant(
             dims=plant.dims,
@@ -96,13 +112,19 @@ class NoisyPlantEpisode:
         self.integrator_method = integrator_method
         self.use_ode_mode = use_ode_mode
         self.rng = rng
+        self.e_scale = e_scale
+        self.u_scale = u_scale
+        self.lambda_u = lambda_u
+        self.lambda_delta_u = lambda_delta_u
         self.setpoint = 0.0
+        self.previous_action = 0.0
 
     def reset(self, setpoint: float) -> np.ndarray:
         self.plant.x = self.rng.uniform(
             self.initial_state_min, self.initial_state_max
         ).reshape(self.plant.dims, 1)
         self.plant.u = np.zeros((1, 1))
+        self.previous_action = 0.0
         self.setpoint = float(setpoint)
         self.plant.y_meas = (
             self.plant.calc_y(self.plant.x, self.plant.u)
@@ -117,7 +139,14 @@ class NoisyPlantEpisode:
         y = self.plant.calc_y(self.plant.x, self.plant.u)
         self.plant.y_meas = y + self._sample_measurement_noise()
         error = self.setpoint - float(self.plant.y_meas.item())
-        return np.array([error], dtype=np.float32), -(error ** 2)
+        action_change = float(action) - self.previous_action
+        reward = (
+            -(error / self.e_scale) ** 2
+            - self.lambda_u * (float(action) / self.u_scale) ** 2
+            - self.lambda_delta_u * (action_change / self.u_scale) ** 2
+        )
+        self.previous_action = float(action)
+        return np.array([error], dtype=np.float32), reward
 
     def _sample_measurement_noise(self) -> np.ndarray:
         return self.rng.normal(
@@ -261,6 +290,10 @@ class RLTrainingWorker(QThread):
                 self.integrator_method,
                 self.use_ode_mode,
                 np.random.default_rng(self.config.seed),
+                e_scale=self.config.e_scale,
+                u_scale=self.config.u_scale,
+                lambda_u=self.config.lambda_u,
+                lambda_delta_u=self.config.lambda_delta_u,
             )
             self._train_episodes(env, replay_buffer)
         except Exception as error:

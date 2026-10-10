@@ -35,8 +35,8 @@ class OffPolicyConfig:
     """Shared network, replay, and optimizer settings for off-policy agents."""
 
     observation_dim: int = 1
-    action_min: float = -4.0
-    action_max: float = 4.0
+    action_min: float = -30.0
+    action_max: float = 30.0
     hidden_layers: int = 2
     neurons: int = 128
     activation: str = 'ReLU'

@@ -612,6 +612,7 @@ class GUI:
             ControllerType.H2: ('H2_optimal_controller_equation.svg', 48),
             ControllerType.HINF: ('Hinf_optimal_controller_equation.svg', 48),
             ControllerType.MPC: ('MPC_controller_equation.svg', 72),
+            ControllerType.RL: ('RL_reward_function.svg', 56),
         }
         if controller_type is ControllerType.PID:
             controller_equations[ControllerType.PID] = (
@@ -751,6 +752,25 @@ class GUI:
         self.rl_steps_spin = self._make_rl_integer_spin(1, 100_000, 600)
         form.addRow('Frames per episode', self.rl_steps_spin)
 
+        self.rl_e_scale_spin = self._make_rl_float_spin(1e-6, 1e6, 1.0, 0.1)
+        self.rl_u_scale_spin = self._make_rl_float_spin(1e-6, 1e6, 4.0, 0.1)
+        self.rl_lambda_u_spin = self._make_rl_float_spin(0.0, 1e6, 0.01, 0.01)
+        self.rl_lambda_delta_u_spin = self._make_rl_float_spin(
+            0.0, 1e6, 0.01, 0.01
+        )
+        reward_settings = QWidget()
+        reward_layout = QGridLayout(reward_settings)
+        reward_layout.setContentsMargins(0, 0, 0, 0)
+        reward_layout.addWidget(QLabel('E_scale'), 0, 0)
+        reward_layout.addWidget(self.rl_e_scale_spin, 0, 1)
+        reward_layout.addWidget(QLabel('U_scale'), 0, 2)
+        reward_layout.addWidget(self.rl_u_scale_spin, 0, 3)
+        reward_layout.addWidget(QLabel('λ_u'), 1, 0)
+        reward_layout.addWidget(self.rl_lambda_u_spin, 1, 1)
+        reward_layout.addWidget(QLabel('λ_Δu'), 1, 2)
+        reward_layout.addWidget(self.rl_lambda_delta_u_spin, 1, 3)
+        form.addRow('Reward parameters', reward_settings)
+
         self.rl_advanced_button = QPushButton('Training settings and progress…')
         self.rl_advanced_button.clicked.connect(self.open_rl_training_dialog)
         form.addRow('Training', self.rl_advanced_button)
@@ -797,6 +817,10 @@ class GUI:
             self.rl_episode_count_spin,
             self.rl_steps_spin,
             self.rl_setpoint_changes_spin,
+            self.rl_e_scale_spin,
+            self.rl_u_scale_spin,
+            self.rl_lambda_u_spin,
+            self.rl_lambda_delta_u_spin,
             self.rl_advanced_button,
             self.rl_layers_spin,
             self.rl_neurons_spin,
@@ -1069,6 +1093,10 @@ class GUI:
             steps_per_episode=self.rl_steps_spin.value(),
             setpoint_changes_per_episode=self.rl_setpoint_changes_spin.value(),
             seed=self.rl_seed_spin.value(),
+            e_scale=self.rl_e_scale_spin.value(),
+            u_scale=self.rl_u_scale_spin.value(),
+            lambda_u=self.rl_lambda_u_spin.value(),
+            lambda_delta_u=self.rl_lambda_delta_u_spin.value(),
         )
 
     def on_rl_training_button_clicked(self):

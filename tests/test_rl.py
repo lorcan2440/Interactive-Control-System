@@ -150,6 +150,41 @@ def test_noisy_episode_observes_error_and_rewards_measured_error_only():
     assert reward == pytest.approx(-(next_observation[0] ** 2))
 
 
+def test_noisy_episode_reward_penalizes_error_effort_and_action_changes():
+    env = NoisyPlantEpisode(
+        _make_plant(),
+        np.array([-0.5]),
+        np.array([0.5]),
+        IntegratorType.EULER_MARUYAMA,
+        False,
+        np.random.default_rng(4),
+        e_scale=2.0,
+        u_scale=5.0,
+        lambda_u=0.4,
+        lambda_delta_u=0.3,
+    )
+    env.reset(setpoint=0.5)
+
+    first_action = 0.5
+    first_observation, first_reward = env.step(first_action, setpoint=0.5)
+    expected_first = (
+        -(first_observation[0] / 2.0) ** 2
+        - 0.4 * (first_action / 5.0) ** 2
+        - 0.3 * (first_action / 5.0) ** 2
+    )
+
+    second_action = -0.25
+    second_observation, second_reward = env.step(second_action, setpoint=0.5)
+    expected_second = (
+        -(second_observation[0] / 2.0) ** 2
+        - 0.4 * (second_action / 5.0) ** 2
+        - 0.3 * ((second_action - first_action) / 5.0) ** 2
+    )
+
+    assert first_reward == pytest.approx(expected_first)
+    assert second_reward == pytest.approx(expected_second)
+
+
 def test_rl_controller_saturates_actions_to_policy_bounds():
     class OutOfRangeAgent:
         config = DDPGConfig(action_min=-2.0, action_max=3.0)
