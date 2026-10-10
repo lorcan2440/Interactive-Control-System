@@ -1,6 +1,7 @@
 # external imports
 import numpy as np
 from scipy.linalg import expm, cholesky
+from scipy.signal import ss2tf, tf2zpk
 
 # local imports
 from utils import get_logger, get_t_span, TIME_STEPS, EPS
@@ -259,6 +260,10 @@ class Plant:
         self.P22 = lambda s: np.array([[self.G_p(s)], [0]])  # shape: (2, 1)
         self.P = lambda s: np.block([[self.P11(s), self.P12(s)], [self.P21(s), self.P22(s)]])  # shape: (3, dims + 3)
 
+        # calculate poles, zeroes and gain
+        num, den = ss2tf(self.A, self.B, self.C, self.D)
+        self.zeroes, self.poles, self.gain = tf2zpk(num[0], den)
+
     def set_all_arrays(self, A: np.ndarray, B: np.ndarray, C: np.ndarray, D: np.ndarray, \
             Q: np.ndarray, R: np.ndarray):
         '''
@@ -393,3 +398,80 @@ class Plant:
         self.y = self.calc_y(self.x, self.u)  # shape (1, 1)
         self.y_meas = self.y + self.sample_measurement_noise(n=1)  # shape (1, 1)
         return self.y_meas
+
+    def calc_mag_and_phase_of_tf_wrapped(self, s: np.ndarray, mag_in_dB: bool = True, phase_in_deg: bool = True, 
+                                         phase_wrap_around: bool = True) -> tuple[np.ndarray, np.ndarray]:
+        '''
+        Calculate the magnitude and phase of the plant transfer function G_p(s) = C @ (sI - A)^{-1} @ B + D
+        for a given array of complex frequencies s. 
+        
+        If used with magnitude in dB, phase in degrees, and phase wrapping around, it is suitable for direct 
+        use in a Bode plot.
+
+        ### Arguments
+        - `s` (np.ndarray): array of complex frequencies. Shape: (n,) (1D array)
+        ### Optional
+        - `mag_in_dB` (bool, default=`True`): if true, return 20 log_10 | G_p(s) | (decibel units) instead of | G_p(s) |.
+        - `phase_in_deg` (bool, default=`True`): if true, return arg G(s) in degrees instead of radians.
+        - `phase_wrap_around` (bool, default=`True`): if true, allow the phase to accumulate beyond the 
+        usual 2 pi range, instead of restricting to (-pi, pi].
+
+        ### Returns
+        - `tuple[np.ndarray, np.ndarray]`: magnitude and phase of G_p(s). Both have shape: (n,)
+        '''
+
+        s = np.asarray(s)
+
+        if not phase_wrap_around:
+            # simple case: can directly evaluate
+            G_vals = self.G_p(s)
+            mag_G_vals = np.abs(G_vals)
+            if mag_in_dB:
+                mag_G_vals = 20 * np.log10(mag_G_vals)
+
+            phase_G_vals = np.angle(G_vals, deg=phase_in_deg)
+            return mag_G_vals, phase_G_vals
+
+        # Initialise arrays for all frequency values
+        mag_G_vals = np.zeros(s.shape, dtype=float)
+        phase_G_vals = np.zeros(s.shape, dtype=float)
+
+        # Accumulate contributions from poles
+        for s_pole in self.poles:
+            distances = np.abs(s - s_pole)
+
+            if mag_in_dB:
+                mag_G_vals -= 20 * np.log10(distances)
+            else:
+                mag_G_vals -= np.log10(distances) * 0  # placeholder
+                mag_G_vals /= distances
+
+            phase_G_vals -= np.angle(
+                s - s_pole, deg=phase_in_deg
+            )
+
+        # Accumulate contributions from zeros
+        for s_zero in self.zeroes:
+            distances = np.abs(s - s_zero)
+
+            if mag_in_dB:
+                mag_G_vals += 20 * np.log10(distances)
+            else:
+                mag_G_vals *= distances
+
+            phase_G_vals += np.angle(
+                s - s_zero, deg=phase_in_deg
+            )
+
+        # Apply the gain factor
+        if mag_in_dB:
+            mag_G_vals += 20 * np.log10(np.abs(self.gain))
+        else:
+            mag_G_vals *= np.abs(self.gain)
+
+        # Account for negative gain
+        if self.gain < 0:
+            phase_G_vals -= 180 if phase_in_deg else np.pi
+
+        return mag_G_vals, phase_G_vals
+

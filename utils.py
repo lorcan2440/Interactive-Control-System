@@ -13,6 +13,10 @@ from PyQt6.QtWidgets import QSlider, QHBoxLayout, QLabel, QWidget
 ### Editable Settings ###
 #########################
 
+# for testing equality of floats
+MAX_SIG_FIGS = 10
+EPS = 10 ** (-1 * MAX_SIG_FIGS)
+
 # set to True to log to console and debug.log
 LOGGING_ON = True
 
@@ -20,8 +24,8 @@ LOGGING_ON = True
 GUI_SLIDER_CONFIG = {
     'manual_u':      {'min': -5.0,   'max': 5.0,     'step': 0.1,    'init': 0.0},
     'y_sp':          {'min': -1.0,   'max': 1.0,     'step': 0.01,   'init': 1.0},
-    'w_proc_stddev': {'min': 0.0,    'max': 2.0,     'step': 0.01,   'init': 0.0},
-    'w_meas_stddev': {'min': 0.0,    'max': 0.25,    'step': 0.005,  'init': 0.0},
+    'w_proc_stddev': {'min': 0.0,    'max': 2.0,     'step': 0.01,   'init': EPS ** 0.25},
+    'w_meas_stddev': {'min': 0.0,    'max': 0.25,    'step': 0.005,  'init': EPS ** 0.5},
     'U_plus':        {'min': 0.0,    'max': 5.0,     'step': 0.1,    'init': 4.0},
     'U_minus':       {'min': -5.0,   'max': 0.0,     'step': 0.1,    'init': -4.0},
     'K_p':           {'min': 0.0,    'max': 200.0,   'step': 1.0,    'init': 20.0},
@@ -62,10 +66,6 @@ ANIM_SPEED_FACTOR = 1.0
 #########################
 ### Internal settings ###
 #########################
-
-# for testing equality of floats
-MAX_SIG_FIGS = 10
-EPS = 10 ** (-1 * MAX_SIG_FIGS)
 
 # controller parameters available in the GUI
 CONTROLLER_PARAMS_LIST = ['manual_u', 'K_p', 'K_i', 'K_d', 'tau', 'U_plus', 'U_minus', 

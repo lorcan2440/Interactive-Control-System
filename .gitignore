@@ -1,5 +1,6 @@
 __pycache__
 .pytest_cache
+.venv
 tests/__pycache__
 output
 tempCodeRunnerFile.py

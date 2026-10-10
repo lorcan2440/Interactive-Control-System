@@ -4,7 +4,7 @@ import pytest
 from controllers import HInfinityController
 from integrators import IntegratorType
 from plant import Plant
-from utils import PLANT_DEFAULT_PARAMS, TIME_STEPS
+from utils import EPS, PLANT_DEFAULT_PARAMS, TIME_STEPS, GUI_SLIDER_CONFIG
 
 
 class SimpleSim:
@@ -56,12 +56,42 @@ def test_hinf_design_and_control_output():
 def test_default_plant_is_stabilizable_detectable_and_care_design_succeeds():
     controller = make_default_plant_controller()
 
+    assert np.allclose(
+        controller.plant.Q,
+        GUI_SLIDER_CONFIG['w_process_stddev']['init'] ** 2 * np.eye(controller.plant.dims),
+    )
+    assert np.allclose(controller.plant.R, [[GUI_SLIDER_CONFIG['w_meas_stddev']['init'] ** 2]])
     assert controller.check_stabilisability_and_detectability() == (True, True)
     controller.update_controller_matrices()
 
     assert np.isfinite(controller.gamma)
     assert controller.gamma > 0.0
     assert controller.is_closed_loop_stable_discrete()[0]
+
+    equilibrium_matrix = np.block([
+        [controller.plant.A, controller.plant.B],
+        [controller.plant.C, controller.plant.D],
+    ])
+    equilibrium_rhs = np.vstack([
+        np.zeros((controller.plant.dims, 1)),
+        controller.simulator.y_sp,
+    ])
+    open_loop_u = np.linalg.solve(equilibrium_matrix, equilibrium_rhs)[-1:]
+    first_u = controller.calc_u(np.array([[0.5]]))
+    assert not np.allclose(first_u, open_loop_u)
+
+
+def test_hinf_input_weight_changes_controller_with_default_noise():
+    low_penalty = make_default_plant_controller()
+    high_penalty = make_default_plant_controller()
+    low_penalty.simulator.Hinf_C1_u = 0.1
+    high_penalty.simulator.Hinf_C1_u = 10.0
+
+    low_penalty.update_controller_matrices()
+    high_penalty.update_controller_matrices()
+
+    assert not np.allclose(low_penalty.F, high_penalty.F)
+    assert not np.allclose(low_penalty.B_Kd, high_penalty.B_Kd)
 
 
 @pytest.mark.parametrize(

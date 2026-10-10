@@ -131,7 +131,7 @@ class OpenLoopController:
         the control input will always be zero. This is because there is no
         finite step input that can produce a steady-state value. 
         
-        In principle, we could apply an impulse input for one frame, using the formula:
+        In theory, we could apply an impulse input for one frame, using the formula:
         `u = e / (self.sim.dt_frame * C @ B)`, but this requires knowing the error (and hence measurement), 
         which is not allowed for an open-loop controller. Therefore, we choose not to implement this case
         and instead take u = 0.
@@ -672,6 +672,12 @@ class HInfinityController:
         input_cost = C1_u ** 2
         state_cost = C1_x.T @ C1_x
 
+        # if B1 and measurement_noise are all zero, raise a warning
+        print(f'B1: {B1}, measurement_noise: {measurement_noise}')
+        if np.allclose(B1, 0.0) and np.isclose(measurement_noise, 0.0):
+            self.logger.warning('H-infinity design: both process noise and measurement noise are zero; '
+                'the controller will be equivalent to an open-loop controller.')
+
         def design_at_gamma(gamma):
             try:
                 # The indefinite CARE preserves rank-deficient disturbance and
@@ -987,10 +993,10 @@ class ModelPredictiveController:
             return
 
         # calculate the discrete-time model matrices
-        self.A_d_hat, self.B_d_hat = discretize_state_space(self.A_hat, self.B_hat, integration_steps, integration_method)
+        self.A_d_hat, self.B_d_hat = discretise_state_space(self.A_hat, self.B_hat, integration_steps, integration_method)
         self.C_d_hat = self.C_hat.copy()
         self.D_d_hat = self.D_hat.copy()
-        self.Q_d_hat = discretize_process_noise(self.A_hat, self.plant.Q, integration_steps, integration_method, use_ode_mode)
+        self.Q_d_hat = discretise_process_noise(self.A_hat, self.plant.Q, integration_steps, integration_method, use_ode_mode)
         self.R_d = np.array([[max(float(self.plant.R[0, 0]), EPS)]])
         self._discrete_model_key = model_key
         self.reset_memory()

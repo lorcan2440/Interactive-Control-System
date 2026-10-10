@@ -8,9 +8,10 @@ from pathlib import Path
 import numpy as np
 from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QRadioButton, QPushButton, \
     QButtonGroup, QDialog, QDialogButtonBox, QMessageBox, QWidget, QGridLayout, QSpinBox, QTableWidget, \
-    QTableWidgetItem, QStyledItemDelegate, QLineEdit, QComboBox
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QDoubleValidator
+    QTableWidgetItem, QStyledItemDelegate, QLineEdit, QComboBox, QFrame
+from PyQt6.QtCore import QByteArray, Qt
+from PyQt6.QtGui import QDoubleValidator, QPalette
+from PyQt6.QtSvgWidgets import QSvgWidget
 import pyqtgraph as pg
 from pyqtgraph import GraphicsLayoutWidget, mkPen
 
@@ -27,11 +28,6 @@ pg.setConfigOption('foreground', '#DDDDDD')
 
 class GUI:
 
-    # TODO: add the LaTeX equation (provided in the SVG image at media/state_space_model_black.svg)
-    # at the top of the change plant model dialog. If possible, detect whether the dialog box
-    # is in dark mode or light mode and invert the colors of the SVG dynamically to white for dark mode.
-    # This could be done by searching and replacing "stroke="#000000" fill="#000000"" in the SVG string 
-    # (only occurs once) with "stroke="#FFFFFF" fill="#FFFFFF" when in dark mode.
     # TODO: add a checkbox in the PID parameters box to enable/disable anti-windup:
     # if checked, show a 'u_sat' slider for the user to set the saturation limit for |u|
     # TODO: add buttons under the PID parameters row to set Kp, Ki, Kd based on IAE, ITAE, 
@@ -389,11 +385,18 @@ class GUI:
             self.set_controller(controller_type)
             self.build_controller_params(controller_type)
 
-    def add_param(self, key: str, display_name: str = None, cfg: dict[str, float] = None):
+    def add_param(
+        self,
+        key: str,
+        display_name: str = None,
+        cfg: dict[str, float] = None,
+        layout=None,
+    ):
         # helper: create a controller parameter slider row
         container, slider, val_label = make_slider_from_cfg(key, display_name, cfg=cfg)
         slider.valueChanged.connect(lambda v, k=key: self.on_controller_param_changed(k, v))
-        self.params_layout.addWidget(container)
+        target_layout = self.params_layout if layout is None else layout
+        target_layout.addWidget(container)
         self.controller_param_widgets[key] = (slider, val_label)
 
     @staticmethod
@@ -431,13 +434,25 @@ class GUI:
                 lbl = QLabel('Open-loop controller: no parameters')
                 self.params_layout.addWidget(lbl)
             case ControllerType.BANGBANG:
-                self.add_param('U_minus', 'U_minus')
-                self.add_param('U_plus', 'U_plus')
+                bangbang_column = QWidget()
+                bangbang_layout = QVBoxLayout(bangbang_column)
+                bangbang_layout.setContentsMargins(0, 0, 0, 0)
+                self.add_param('U_minus', 'U_minus', layout=bangbang_layout)
+                self.add_param('U_plus', 'U_plus', layout=bangbang_layout)
+                self.params_layout.addWidget(bangbang_column)
             case ControllerType.PID:
-                self.add_param('K_p', 'K_p')
-                self.add_param('K_i', 'K_i')
-                self.add_param('K_d', 'K_d')
-                self.add_param('tau', 'tau')
+                pid_parameters = QWidget()
+                pid_rows = QVBoxLayout(pid_parameters)
+                pid_rows.setContentsMargins(0, 0, 0, 0)
+                top_row = QHBoxLayout()
+                bottom_row = QHBoxLayout()
+                pid_rows.addLayout(top_row)
+                pid_rows.addLayout(bottom_row)
+                self.add_param('K_p', 'K_p', layout=top_row)
+                self.add_param('K_i', 'K_i', layout=top_row)
+                self.add_param('K_d', 'K_d', layout=bottom_row)
+                self.add_param('tau', 'tau', layout=bottom_row)
+                self.params_layout.addWidget(pid_parameters)
 
                 # reset PID memory button
                 reset_btn = QPushButton('Reset memory')
@@ -445,36 +460,103 @@ class GUI:
                 reset_btn.clicked.connect(self.sim.pid_controller.reset_memory)
                 self.params_layout.addWidget(reset_btn)
             case ControllerType.H2:
+                h2_parameters = QWidget()
+                h2_columns = QHBoxLayout(h2_parameters)
+                h2_columns.setContentsMargins(0, 0, 0, 0)
+                state_parameters = QWidget()
+                state_layout = QVBoxLayout(state_parameters)
+                state_layout.setContentsMargins(0, 0, 0, 0)
+                input_parameters = QWidget()
+                input_layout = QVBoxLayout(input_parameters)
+                input_layout.setContentsMargins(0, 0, 0, 0)
+                h2_columns.addWidget(state_parameters)
+                h2_columns.addWidget(input_parameters)
                 for i in range(self.sim.plant.dims):
                     key = f'H2_C1_x{i + 1}'
                     if not hasattr(self.sim, key):
                         setattr(self.sim, key, GUI_SLIDER_CONFIG['H2_C1_x']['init'])
-                    self.add_param(key, key, GUI_SLIDER_CONFIG['H2_C1_x'])
+                    self.add_param(
+                        key, key, GUI_SLIDER_CONFIG['H2_C1_x'], state_layout
+                    )
                 if not hasattr(self.sim, 'H2_C1_u'):
                     self.sim.H2_C1_u = GUI_SLIDER_CONFIG['H2_C1_u']['init']
-                self.add_param('H2_C1_u', 'H2_C1_u', GUI_SLIDER_CONFIG['H2_C1_u'])
+                self.add_param(
+                    'H2_C1_u', 'H2_C1_u', GUI_SLIDER_CONFIG['H2_C1_u'],
+                    input_layout,
+                )
+                self.params_layout.addWidget(h2_parameters)
             case ControllerType.HINF:
+                hinf_parameters = QWidget()
+                hinf_columns = QHBoxLayout(hinf_parameters)
+                hinf_columns.setContentsMargins(0, 0, 0, 0)
+                state_parameters = QWidget()
+                state_layout = QVBoxLayout(state_parameters)
+                state_layout.setContentsMargins(0, 0, 0, 0)
+                input_parameters = QWidget()
+                input_layout = QVBoxLayout(input_parameters)
+                input_layout.setContentsMargins(0, 0, 0, 0)
+                hinf_columns.addWidget(state_parameters)
+                hinf_columns.addWidget(input_parameters)
                 for i in range(self.sim.plant.dims):
                     key = f'Hinf_C1_x{i + 1}'
                     if not hasattr(self.sim, key):
                         setattr(self.sim, key, GUI_SLIDER_CONFIG['Hinf_C1_x']['init'])
-                    self.add_param(key, key, GUI_SLIDER_CONFIG['Hinf_C1_x'])
+                    self.add_param(
+                        key, key, GUI_SLIDER_CONFIG['Hinf_C1_x'], state_layout
+                    )
                 if not hasattr(self.sim, 'Hinf_C1_u'):
                     self.sim.Hinf_C1_u = GUI_SLIDER_CONFIG['Hinf_C1_u']['init']
                 self.add_param(
-                    'Hinf_C1_u', 'Hinf_C1_u', GUI_SLIDER_CONFIG['Hinf_C1_u']
+                    'Hinf_C1_u', 'Hinf_C1_u', GUI_SLIDER_CONFIG['Hinf_C1_u'],
+                    input_layout,
                 )
+                self.params_layout.addWidget(hinf_parameters)
             case ControllerType.MPC:
                 self.add_param('MPC_N', 'Horizon N', GUI_SLIDER_CONFIG['MPC_N'])
+                mpc_buttons = QWidget()
+                mpc_button_layout = QVBoxLayout(mpc_buttons)
+                mpc_button_layout.setContentsMargins(0, 0, 0, 0)
                 model_button = QPushButton('Set internal plant model')
                 model_button.clicked.connect(self.open_mpc_model_dialog)
-                self.params_layout.addWidget(model_button)
+                mpc_button_layout.addWidget(model_button)
                 cost_button = QPushButton('Set optimisation function')
                 cost_button.clicked.connect(self.open_mpc_cost_dialog)
-                self.params_layout.addWidget(cost_button)
+                mpc_button_layout.addWidget(cost_button)
                 constraint_button = QPushButton('Set optimisation constraints')
                 constraint_button.clicked.connect(self.open_mpc_constraint_dialog)
-                self.params_layout.addWidget(constraint_button)
+                mpc_button_layout.addWidget(constraint_button)
+                self.params_layout.addWidget(mpc_buttons)
+
+        controller_equations = {
+            ControllerType.OPENLOOP: ('open_loop_controller_equation.svg', 48),
+            ControllerType.BANGBANG: ('bang_bang_controller_equation.svg', 60),
+            ControllerType.PID: ('PID_controller_amplitudes_equation.svg', 48),
+            ControllerType.H2: ('H2_optimal_controller_equation.svg', 48),
+            ControllerType.HINF: ('Hinf_optimal_controller_equation.svg', 48),
+            ControllerType.MPC: ('MPC_controller_equation.svg', 72),
+        }
+        if controller_type in controller_equations:
+            equation_filename, equation_height = controller_equations[controller_type]
+            try:
+                equation = self._make_equation(
+                    self.params_box, equation_filename, max_height=equation_height
+                )
+            except (OSError, RuntimeError, ValueError) as error:
+                QMessageBox.critical(
+                    self.params_box,
+                    'Unable to display controller equation',
+                    str(error),
+                )
+            else:
+                if self.params_layout.count():
+                    self.params_layout.setStretch(0, 1)
+                separator = QFrame()
+                separator.setFrameShape(QFrame.Shape.VLine)
+                separator.setFrameShadow(QFrame.Shadow.Sunken)
+                self.params_layout.addWidget(separator)
+                self.params_layout.addWidget(
+                    equation, alignment=Qt.AlignmentFlag.AlignVCenter
+                )
 
         # set slider positions to current values
         for key, (slider, val_label) in self.controller_param_widgets.items():
@@ -630,6 +712,19 @@ class GUI:
             dialog.setWindowTitle('Change plant model')
             dlg_layout = QVBoxLayout()
 
+            try:
+                equation_widget = self._make_equation(dialog, 'plant_state_space_model.svg')
+            except (OSError, RuntimeError, ValueError) as error:
+                QMessageBox.critical(
+                    self.sim,
+                    'Unable to display plant model equation',
+                    str(error),
+                )
+                return
+            dlg_layout.addWidget(
+                equation_widget, alignment=Qt.AlignmentFlag.AlignHCenter
+            )
+
             widget = StateSpaceMatrixInput(parent=dialog, initial_dims=self.sim.plant.dims)
             widget.set_use_ode_mode(getattr(self.sim, 'use_ode_mode', False))
             widget.set_integrator_method(getattr(self.sim, 'integrator_method', IntegratorType.EULER_MARUYAMA))
@@ -685,6 +780,41 @@ class GUI:
                 except Exception:
                     pass
                 self.sim.running = True
+
+    @staticmethod
+    def _make_equation(
+        dialog: QWidget, filename: str, max_height: int | None = None
+    ):
+        """Load a LaTeX equation SVG. If the GUI is dark, change the colour from black to white.
+
+        Args:
+            dialog: The parent widget (used to get the background colour).
+            filename: The name of the SVG file to load, ending in .svg, not including any folder names."""
+        equation_path = Path(__file__).resolve().parent / 'media' / filename
+        try:
+            svg_content = equation_path.read_text(encoding='utf-8')
+        except OSError as error:
+            raise OSError(f'Could not read the equation SVG at {equation_path}.') from error
+
+        background_color = dialog.palette().color(QPalette.ColorRole.Window)
+        if background_color.lightness() < 128:
+            svg_content = svg_content.replace('stroke="#000000" fill="#000000"', 'stroke="#FFFFFF" fill="#FFFFFF"')
+
+        svg_widget = QSvgWidget(dialog)
+        svg_widget.load(QByteArray(svg_content.encode('utf-8')))
+        if not svg_widget.renderer().isValid():
+            raise RuntimeError(f'Qt could not render the equation SVG at {equation_path}.')
+        svg_size = svg_widget.renderer().defaultSize()
+        if not svg_size.isValid() or svg_size.isEmpty():
+            raise ValueError(f'The equation SVG has an invalid intrinsic size: {equation_path}.')
+        if max_height is not None:
+            svg_size = svg_size.scaled(
+                svg_size.width(),
+                max_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+            )
+        svg_widget.setFixedSize(svg_size)
+        return svg_widget
 
     def on_accept_change_plant(self, widget, dialog):
         # called when "OK" is clicked in the change plant dialog box
