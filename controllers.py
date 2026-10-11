@@ -1010,14 +1010,33 @@ class ModelPredictiveController:
         self.observer = None
 
     def reset_memory(self):
-        """Reset the state observer to the configured initial state."""
+        """Reset the observer from the plant's current simulated state."""
         self.observer = None
         if not hasattr(self, 'A_d_hat'):
             return
         if self.A_d_hat.shape != self.A_hat.shape:
             return
+
+        # reset Kalman filter initial state
+        if self.simulator.t == 0.0:
+            # if we are at the start of the simulation, use the plant's given initial state x_0
+            x_0_hat = self.plant.x_0
+        else:
+            # if we are in the middle of simulation, x isn't allowed to be accessed, so use the steady-state value 
+            # x_ss and u_ss such that C_hat @ x_ss + D_hat @ u_ss = y_sp and A_hat @ x_ss + B_hat @ u_ss = 0)
+            dims = self.plant.dims
+            A_eq = np.block([[self.A_hat, self.B_hat], [self.C_hat, self.D_hat]])
+            b_eq = np.vstack([np.zeros((dims, 1)), self.simulator.y_sp])
+            try:
+                x_u_ss = np.linalg.solve(A_eq, b_eq)
+                x_0_hat = x_u_ss[:dims]
+            except np.linalg.LinAlgError:
+                # resort to plant's given initial state x_0
+                x_0_hat = self.plant.x_0
+                self.logger.warning(f'Kalman filter could not solve for steady state x: defaulting to plant initial state {x_0_hat}.')
+        
         self.observer = KalmanFilter(self.A_d_hat, self.B_d_hat, self.C_d_hat, self.D_d_hat, self.Q_d_hat, self.R_d,
-                                    initial_state=self.plant.x_0.copy())
+                                    initial_state=x_0_hat)
 
     def update_discrete_model(self):
         """Stage 2: discretise the internal model using the simulator's substeps."""

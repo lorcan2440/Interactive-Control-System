@@ -34,6 +34,12 @@ from utils import make_slider_from_cfg, PLANT_DEFAULT_PARAMS, MAX_SIG_FIGS, ANIM
 pg.setConfigOption('background', '#222222')
 pg.setConfigOption('foreground', '#DDDDDD')
 
+RL_DEFAULT_POLICY_PATHS = {
+    'DDPG': 'RL_policies/ddpg_policy_new.pt',
+    'TD3': 'RL_policies/td3_policy_new.pt',
+    'SAC': 'RL_policies/sac_policy_new.pt',
+}
+
 
 class GUI:
 
@@ -410,14 +416,17 @@ class GUI:
         self.sim.y_sp = np.array([[sp]])
 
     def on_controller_selected(self, controller_type: ControllerType):
-        if controller_type is ControllerType.RL and self.sim.rl_controller.agent is None:
+        if controller_type is ControllerType.RL:
             if controller_type is not self._displayed_controller_type:
                 self.build_controller_params(controller_type)
-            self.rl_status_label.setText(
-                f'Train or load a {self._rl_algorithm} policy. '
-                'The active controller remains unchanged until then.'
-            )
-            return
+            else:
+                self.on_rl_algorithm_selected(self._rl_algorithm)
+            if self.sim.rl_controller.agent is None:
+                self.rl_status_label.setText(
+                    f'Unable to load the default {self._rl_algorithm} policy. '
+                    'Train or load a policy before selecting RL control.'
+                )
+                return
         if controller_type is not self.sim.controller_type:
             self.sim.controller_type = controller_type
             self.set_controller(controller_type)
@@ -697,6 +706,8 @@ class GUI:
 
     def build_rl_controller_params(self):
         """Build the compact RL parameter panel and advanced training dialog."""
+        self._rl_policy_controls_ready = False
+        self._suppress_default_policy_load = False
         if self.rl_advanced_dialog is not None:
             self.rl_advanced_dialog.close()
             self.rl_advanced_dialog.deleteLater()
@@ -950,6 +961,7 @@ class GUI:
         self.rl_stop_button.setEnabled(
             self.rl_worker is not None and self.rl_worker.isRunning()
         )
+        self._rl_policy_controls_ready = True
         self.on_rl_algorithm_selected(self._rl_algorithm)
 
     def open_rl_training_dialog(self):
@@ -960,7 +972,7 @@ class GUI:
             self.rl_advanced_dialog.activateWindow()
 
     def on_rl_algorithm_selected(self, algorithm: str):
-        """Keep algorithm-specific settings aligned with the selected radio button."""
+        """Load the selected algorithm's default policy and update its settings."""
         self._rl_algorithm = algorithm
         settings = getattr(self, 'rl_algorithm_settings', None)
         if settings is not None:
@@ -970,14 +982,67 @@ class GUI:
             self.rl_sac_target_entropy_spin.setEnabled(auto_tune)
             self.rl_sac_alpha_lr_spin.setEnabled(auto_tune)
         if (
-            hasattr(self, 'rl_status_label')
-            and self.sim.rl_controller.agent is None
-            and (self.rl_worker is None or not self.rl_worker.isRunning())
+            not getattr(self, '_rl_policy_controls_ready', False)
+            or getattr(self, '_suppress_default_policy_load', False)
         ):
+            return
+        try:
+            policy_path = Path(__file__).resolve().parent / RL_DEFAULT_POLICY_PATHS[algorithm]
+            agent = load_agent_policy(policy_path)
+            if agent.algorithm != algorithm:
+                raise ValueError(
+                    f'Default policy at {policy_path} contains {agent.algorithm}, '
+                    f'not {algorithm}.'
+                )
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
             self.rl_status_label.setText(
-                f'Train or load a {algorithm} policy. '
-                'The active controller remains unchanged until then.'
+                f'Unable to load the default {algorithm} policy: {error}'
             )
+            QMessageBox.critical(
+                self.params_box,
+                'Unable to load default RL policy',
+                str(error),
+            )
+            return
+        self.sim.rl_controller.set_agent(agent)
+        self._apply_rl_policy_settings(agent)
+        self.rl_save_button.setEnabled(True)
+        self.rl_status_label.setText(
+            f'Loaded the default {algorithm} policy from {policy_path}.'
+        )
+
+    def _apply_rl_policy_settings(self, agent: OffPolicyAgent):
+        """Synchronize training controls with a loaded policy's configuration."""
+        self.rl_action_min_spin.setValue(agent.config.action_min)
+        self.rl_action_max_spin.setValue(agent.config.action_max)
+        self.rl_layers_spin.setValue(agent.config.hidden_layers)
+        self.rl_neurons_spin.setValue(agent.config.neurons)
+        self.rl_activation_combo.setCurrentText(agent.config.activation)
+        self.rl_actor_lr_spin.setValue(agent.config.actor_learning_rate)
+        self.rl_critic_lr_spin.setValue(agent.config.critic_learning_rate)
+        self.rl_gamma_spin.setValue(agent.config.discount_factor)
+        self.rl_tau_spin.setValue(agent.config.target_update_rate)
+        self.rl_batch_spin.setValue(agent.config.batch_size)
+        self.rl_replay_spin.setValue(agent.config.replay_capacity)
+        self.rl_learning_starts_spin.setValue(agent.config.learning_starts)
+        if agent.algorithm == 'DDPG':
+            self.rl_ddpg_noise_spin.setValue(agent.config.exploration_noise_std)
+        elif agent.algorithm == 'TD3':
+            self.rl_td3_exploration_noise_spin.setValue(
+                agent.config.exploration_noise_std
+            )
+            self.rl_td3_target_noise_spin.setValue(
+                agent.config.target_policy_noise_std
+            )
+            self.rl_td3_noise_clip_spin.setValue(agent.config.target_noise_clip)
+            self.rl_td3_policy_delay_spin.setValue(agent.config.policy_delay)
+        elif agent.algorithm == 'SAC':
+            self.rl_sac_alpha_spin.setValue(agent.config.initial_entropy_coefficient)
+            self.rl_sac_auto_alpha_checkbox.setChecked(
+                agent.config.automatic_entropy_tuning
+            )
+            self.rl_sac_target_entropy_spin.setValue(agent.config.target_entropy)
+            self.rl_sac_alpha_lr_spin.setValue(agent.config.entropy_learning_rate)
 
     def _set_rl_compact_controls_enabled(self, enabled: bool):
         for widget in (
@@ -1289,31 +1354,12 @@ class GUI:
             QMessageBox.critical(self.params_box, 'Unable to load policy', str(error))
             return
         self.sim.rl_controller.set_agent(agent)
-        self.rl_action_min_spin.setValue(agent.config.action_min)
-        self.rl_action_max_spin.setValue(agent.config.action_max)
-        self.rl_layers_spin.setValue(agent.config.hidden_layers)
-        self.rl_neurons_spin.setValue(agent.config.neurons)
-        self.rl_activation_combo.setCurrentText(agent.config.activation)
-        self.rl_algorithm_buttons[agent.algorithm].setChecked(True)
-        self.rl_actor_lr_spin.setValue(agent.config.actor_learning_rate)
-        self.rl_critic_lr_spin.setValue(agent.config.critic_learning_rate)
-        self.rl_gamma_spin.setValue(agent.config.discount_factor)
-        self.rl_tau_spin.setValue(agent.config.target_update_rate)
-        self.rl_batch_spin.setValue(agent.config.batch_size)
-        self.rl_replay_spin.setValue(agent.config.replay_capacity)
-        self.rl_learning_starts_spin.setValue(agent.config.learning_starts)
-        if agent.algorithm == 'DDPG':
-            self.rl_ddpg_noise_spin.setValue(agent.config.exploration_noise_std)
-        elif agent.algorithm == 'TD3':
-            self.rl_td3_exploration_noise_spin.setValue(agent.config.exploration_noise_std)
-            self.rl_td3_target_noise_spin.setValue(agent.config.target_policy_noise_std)
-            self.rl_td3_noise_clip_spin.setValue(agent.config.target_noise_clip)
-            self.rl_td3_policy_delay_spin.setValue(agent.config.policy_delay)
-        elif agent.algorithm == 'SAC':
-            self.rl_sac_alpha_spin.setValue(agent.config.initial_entropy_coefficient)
-            self.rl_sac_auto_alpha_checkbox.setChecked(agent.config.automatic_entropy_tuning)
-            self.rl_sac_target_entropy_spin.setValue(agent.config.target_entropy)
-            self.rl_sac_alpha_lr_spin.setValue(agent.config.entropy_learning_rate)
+        self._suppress_default_policy_load = True
+        try:
+            self.rl_algorithm_buttons[agent.algorithm].setChecked(True)
+        finally:
+            self._suppress_default_policy_load = False
+        self._apply_rl_policy_settings(agent)
         self.radio_rl.setEnabled(True)
         self.rl_save_button.setEnabled(True)
         if self.radio_rl.isChecked():

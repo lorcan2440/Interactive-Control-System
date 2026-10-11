@@ -56,6 +56,33 @@ def test_mpc_solves_qp_and_returns_finite_control():
     assert control[0, 0] > 0.0
 
 
+def test_mpc_switch_initializes_observer_from_current_plant_state():
+    plant = Plant(
+        dims=2,
+        A=np.array([[-11.0, 20.0], [10.0, -21.0]]),
+        B=np.array([[1.0], [0.0]]),
+        C=np.array([[0.0, 1.0]]),
+        D=np.array([[0.0]]),
+        Q=np.zeros((2, 2)),
+        R=np.array([[0.0]]),
+    )
+    sim = SimpleSim()
+    sim.y_sp = np.array([[0.85]])
+    equilibrium = np.linalg.solve(
+        np.block([[plant.A, plant.B], [plant.C, plant.D]]),
+        np.vstack([np.zeros((plant.dims, 1)), sim.y_sp]),
+    )
+    plant.x = equilibrium[:plant.dims].copy()
+    plant.u = equilibrium[plant.dims:].copy()
+    plant.y_meas = sim.y_sp.copy()
+    controller = ModelPredictiveController(simulator=sim, plant=plant)
+
+    control = controller.calc_u(np.zeros((1, 1)))
+
+    assert np.allclose(control, equilibrium[plant.dims:], atol=1e-6)
+    assert np.allclose(controller.observer.x_hat, plant.x, atol=1e-6)
+
+
 def test_mpc_terminal_constraint_does_not_use_input_coefficients():
     controller = ModelPredictiveController(simulator=SimpleSim(), plant=make_plant())
     controller.ensure_horizon(2)
