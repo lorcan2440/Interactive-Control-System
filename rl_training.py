@@ -10,15 +10,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from integrators import IntegratorType
 from plant import Plant
-from rl import (
-    DDPGConfig,
-    OffPolicyAgent,
-    OffPolicyConfig,
-    ReplayBuffer,
-    SACConfig,
-    TD3Config,
-    create_agent,
-)
+from rl import DDPGConfig, OffPolicyAgent, OffPolicyConfig, ReplayBuffer, SACConfig, TD3Config, create_agent
 
 
 @dataclass
@@ -41,19 +33,13 @@ class RLTrainingConfig:
     lambda_delta_u: float = 0.01
 
     def validate(self):
-        agent_configs = {
-            'DDPG': DDPGConfig,
-            'TD3': TD3Config,
-            'SAC': SACConfig,
-        }
+        agent_configs = {'DDPG': DDPGConfig, 'TD3': TD3Config, 'SAC': SACConfig}
         try:
             expected_config = agent_configs[self.algorithm]
         except KeyError as error:
             raise ValueError(f'Unsupported RL algorithm: {self.algorithm}.') from error
         if not isinstance(self.agent_config, expected_config):
-            raise TypeError(
-                f'{self.algorithm} requires {expected_config.__name__}.'
-            )
+            raise TypeError(f'{self.algorithm} requires {expected_config.__name__}.')
         self.agent_config.validate()
         if self.episode_count < 1 or self.steps_per_episode < 1:
             raise ValueError('Episode count and episode length must be positive.')
@@ -80,30 +66,11 @@ class RLTrainingConfig:
 class NoisyPlantEpisode:
     """Advance an independent plant using only noisy measured-error observations."""
 
-    def __init__(
-        self,
-        plant: Plant,
-        initial_state_min: np.ndarray,
-        initial_state_max: np.ndarray,
-        integrator_method: IntegratorType,
-        use_ode_mode: bool,
-        rng: np.random.Generator,
-        e_scale: float = 1.0,
-        u_scale: float = 4.0,
-        lambda_u: float = 0.01,
-        lambda_delta_u: float = 0.01,
-    ):
-        self.plant = Plant(
-            dims=plant.dims,
-            A=plant.A.copy(),
-            B=plant.B.copy(),
-            C=plant.C.copy(),
-            D=plant.D.copy(),
-            Q=plant.Q.copy(),
-            R=plant.R.copy(),
-            x_0=plant.x_0.copy(),
-            u_0=plant.u_0.copy(),
-        )
+    def __init__(self, plant: Plant, initial_state_min: np.ndarray, initial_state_max: np.ndarray,
+        integrator_method: IntegratorType, use_ode_mode: bool, rng: np.random.Generator, e_scale: float = 1.0,
+        u_scale: float = 4.0, lambda_u: float = 0.01, lambda_delta_u: float = 0.01):
+        self.plant = Plant(dims=plant.dims, A=plant.A.copy(), B=plant.B.copy(), C=plant.C.copy(), D=plant.D.copy(),
+            Q=plant.Q.copy(), R=plant.R.copy(), x_0=plant.x_0.copy(), u_0=plant.u_0.copy())
         self.plant.dt_anim = plant.dt_anim
         self.plant.dt_int = plant.dt_int
         self.plant.set_cached_arrays()
@@ -120,16 +87,12 @@ class NoisyPlantEpisode:
         self.previous_action = 0.0
 
     def reset(self, setpoint: float) -> np.ndarray:
-        self.plant.x = self.rng.uniform(
-            self.initial_state_min, self.initial_state_max
-        ).reshape(self.plant.dims, 1)
+        # choose a random initial state
+        self.plant.x = self.rng.uniform(self.initial_state_min, self.initial_state_max).reshape(self.plant.dims, 1)
         self.plant.u = np.zeros((1, 1))
         self.previous_action = 0.0
         self.setpoint = float(setpoint)
-        self.plant.y_meas = (
-            self.plant.calc_y(self.plant.x, self.plant.u)
-            + self._sample_measurement_noise()
-        )
+        self.plant.y_meas = self.plant.calc_y(self.plant.x, self.plant.u) + self._sample_measurement_noise()
         return np.array([self.setpoint - float(self.plant.y_meas.item())], dtype=np.float32)
 
     def step(self, action: float, setpoint: float) -> tuple[np.ndarray, float]:
@@ -140,6 +103,7 @@ class NoisyPlantEpisode:
         self.plant.y_meas = y + self._sample_measurement_noise()
         error = self.setpoint - float(self.plant.y_meas.item())
         action_change = float(action) - self.previous_action
+        # compute reward signal
         reward = (
             -(error / self.e_scale) ** 2
             - self.lambda_u * (float(action) / self.u_scale) ** 2
@@ -149,11 +113,7 @@ class NoisyPlantEpisode:
         return np.array([error], dtype=np.float32), reward
 
     def _sample_measurement_noise(self) -> np.ndarray:
-        return self.rng.normal(
-            loc=0.0,
-            scale=np.sqrt(self.plant.R[0, 0]),
-            size=(1, 1),
-        )
+        return self.rng.normal(loc=0.0, scale=np.sqrt(self.plant.R[0, 0]), size=(1, 1))
 
     def _integrate_frame(self):
         plant = self.plant
@@ -162,15 +122,9 @@ class NoisyPlantEpisode:
         control_effect = plant.B @ plant.u
 
         if self.use_ode_mode:
-            process_noise = self.rng.multivariate_normal(
-                np.zeros(plant.dims), plant.Q
-            ).reshape(plant.dims, 1)
+            process_noise = self.rng.multivariate_normal(np.zeros(plant.dims), plant.Q).reshape(plant.dims, 1)
             if self.integrator_method is IntegratorType.ANALYTIC_ODE:
-                plant.x = (
-                    plant.exp_A_t_span[-1] @ state
-                    + plant.A_inv_exp_At_minus_I[-1]
-                    @ (control_effect + process_noise)
-                )
+                plant.x = plant.exp_A_t_span[-1] @ state + plant.A_inv_exp_At_minus_I[-1] @ (control_effect + process_noise)
                 return
             if self.integrator_method is not IntegratorType.RK4:
                 raise ValueError(f'Unsupported ODE integrator: {self.integrator_method}.')
@@ -185,9 +139,7 @@ class NoisyPlantEpisode:
 
         if self.integrator_method is IntegratorType.EULER_MARUYAMA:
             for dt in time_steps:
-                process_noise = self.rng.multivariate_normal(
-                    np.zeros(plant.dims), plant.Q
-                ).reshape(plant.dims, 1)
+                process_noise = self.rng.multivariate_normal(np.zeros(plant.dims), plant.Q).reshape(plant.dims, 1)
                 state += (plant.A @ state + control_effect) * dt + process_noise * np.sqrt(dt)
             plant.x = state
             return
@@ -202,9 +154,7 @@ class NoisyPlantEpisode:
                     transition = plant.Phi
                     input_gain = plant.Gamma
                     covariance = plant.Q_d
-                process_noise = self.rng.multivariate_normal(
-                    np.zeros(plant.dims), covariance
-                ).reshape(plant.dims, 1)
+                process_noise = self.rng.multivariate_normal(np.zeros(plant.dims), covariance).reshape(plant.dims, 1)
                 state = transition @ state + input_gain @ plant.u + process_noise
             plant.x = state
             return
@@ -221,14 +171,8 @@ class RLTrainingWorker(QThread):
     training_failed = pyqtSignal(str)
     policy_ready = pyqtSignal(object, bool)
 
-    def __init__(
-        self,
-        plant: Plant,
-        integrator_method: IntegratorType,
-        use_ode_mode: bool,
-        config: RLTrainingConfig,
-        parent=None,
-    ):
+    def __init__(self, plant: Plant, integrator_method: IntegratorType, use_ode_mode: bool, config: RLTrainingConfig,
+            parent=None):
         super().__init__(parent)
         config.validate()
         if config.initial_state_min.size != plant.dims:
@@ -273,28 +217,13 @@ class RLTrainingWorker(QThread):
         self._loss_history: list[tuple[float, float]] = []
         self._training_updates = 0
         try:
-            self.agent = create_agent(
-                self.config.algorithm,
-                self.config.agent_config,
-                seed=self.config.seed,
-            )
-            replay_buffer = ReplayBuffer(
-                self.config.agent_config.replay_capacity,
-                self.config.agent_config.observation_dim,
-                self.agent.rng,
-            )
-            env = NoisyPlantEpisode(
-                self.plant,
-                self.config.initial_state_min,
-                self.config.initial_state_max,
-                self.integrator_method,
-                self.use_ode_mode,
-                np.random.default_rng(self.config.seed),
-                e_scale=self.config.e_scale,
-                u_scale=self.config.u_scale,
-                lambda_u=self.config.lambda_u,
-                lambda_delta_u=self.config.lambda_delta_u,
-            )
+            self.agent = create_agent(self.config.algorithm, self.config.agent_config, seed=self.config.seed)
+            replay_buffer = ReplayBuffer(self.config.agent_config.replay_capacity, self.config.agent_config.observation_dim,
+                self.agent.rng)
+            env = NoisyPlantEpisode(self.plant, self.config.initial_state_min, self.config.initial_state_max,
+                self.integrator_method, self.use_ode_mode, np.random.default_rng(self.config.seed),
+                e_scale=self.config.e_scale, u_scale=self.config.u_scale, lambda_u=self.config.lambda_u,
+                lambda_delta_u=self.config.lambda_delta_u)
             self._train_episodes(env, replay_buffer)
         except Exception as error:
             self.training_failed.emit(f'{type(error).__name__}: {error}')
@@ -322,39 +251,19 @@ class RLTrainingWorker(QThread):
                     requested_changes = self._setpoint_changes
                 if requested_changes != changes_per_episode:
                     changes_per_episode = requested_changes
-                    change_steps = self._make_setpoint_schedule(
-                        max(0, changes_per_episode - changes_done),
-                        start=step,
-                    )
+                    change_steps = self._make_setpoint_schedule(max(0, changes_per_episode - changes_done), start=step)
                 if step in change_steps:
                     env.setpoint = self._sample_setpoint(env.rng)
                     changes_done += 1
 
-                warmup_steps = max(
-                    self.config.agent_config.learning_starts,
-                    self.config.agent_config.batch_size,
-                )
+                warmup_steps = max(self.config.agent_config.learning_starts, self.config.agent_config.batch_size)
                 if len(replay_buffer) < warmup_steps:
-                    action = env.rng.uniform(
-                        self.config.agent_config.action_min,
-                        self.config.agent_config.action_max,
-                        size=1,
-                    )
+                    action = env.rng.uniform(self.config.agent_config.action_min, self.config.agent_config.action_max, size=1)
                 else:
                     action = self.agent.explore_action(observation, env.rng)
-                action = np.clip(
-                    action,
-                    self.config.agent_config.action_min,
-                    self.config.agent_config.action_max,
-                )
+                action = np.clip(action, self.config.agent_config.action_min, self.config.agent_config.action_max)
                 next_observation, reward = env.step(float(action[0]), env.setpoint)
-                replay_buffer.add(
-                    observation,
-                    action,
-                    reward,
-                    next_observation,
-                    step == self.config.steps_per_episode - 1,
-                )
+                replay_buffer.add(observation, action, reward, next_observation, step == self.config.steps_per_episode - 1)
                 observation = next_observation
                 episode_reward += reward
 
@@ -367,22 +276,13 @@ class RLTrainingWorker(QThread):
                     self._training_updates += 1
 
             if actor_losses or critic_losses:
-                mean_actor_loss = (
-                    float(np.mean(actor_losses)) if actor_losses else float('nan')
-                )
-                mean_critic_loss = (
-                    float(np.mean(critic_losses)) if critic_losses else float('nan')
-                )
+                mean_actor_loss = float(np.mean(actor_losses)) if actor_losses else float('nan')
+                mean_critic_loss = float(np.mean(critic_losses)) if critic_losses else float('nan')
                 self._loss_history.append((mean_actor_loss, mean_critic_loss))
             else:
                 mean_actor_loss = float('nan')
                 mean_critic_loss = float('nan')
-            self.episode_completed.emit(
-                episode + 1,
-                episode_reward,
-                mean_actor_loss,
-                mean_critic_loss,
-            )
+            self.episode_completed.emit(episode + 1, episode_reward, mean_actor_loss, mean_critic_loss)
             if self._stop_requested.is_set():
                 break
 
@@ -409,12 +309,4 @@ class RLTrainingWorker(QThread):
         count = min(max(0, int(count)), available_steps)
         if count == 0:
             return set()
-        return {
-            int(step)
-            for step in np.linspace(
-                start,
-                self.config.steps_per_episode - 1,
-                count,
-                dtype=int,
-            )
-        }
+        return {int(step) for step in np.linspace(start, self.config.steps_per_episode - 1, count, dtype=int)}
