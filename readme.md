@@ -1,6 +1,5 @@
 # Interactive Control System
 
-https://github.com/user-attachments/assets/4b876526-36ec-4d46-a481-f202f1f5bdc2
 
 ## Currently available controllers
 
