@@ -4,17 +4,16 @@
   <a href="https://github.com/lorcan2440/Interactive-Control-System/blob/main/media/Recording%202026-10-11%20102742.mp4">Watch the demo video</a>
 </video>
 
-
 ## Currently available controllers
 
-- [x] **Manual control** (choose the control input with your mouse!)
-- [x] **Feedforward control** (aka open loop control)
-- [x] **Bang-bang control** (aka on/off control)
-- [x] **PID control**, including filtered derivative on measurement
-- [x] **H2 optimal control (aka LQG control)**, solved via Riccati equations
-- [x] **H-infinity** with output feedback control, solved via Riccati equations*
-- [x] **Model predictive control** (MPC) with Kalman filter, solved via OSQP
-- [x] **Reinforcement Learning** (RL) controllers: three actor-critic algos (DDPG, TD3 and SAC), pretrained models provided and can train new models with custom hyperparameters
+- **Manual** - set the control input yourself, using your mouse
+- **Open-loop** - no feedback, just calculate the control input based on setpoint and plant gain.
+- **Bang-bang** - positive input if output is too low, negative input if output is too high
+- **PID** - the classic industry-standard, including option of a filtered derivative on measurement to help with practical stability.
+- **H2 optimal control** - aka linear quadratic regulator (LQR) with a Kalman filter or linear quadratic Gaussian (LQG). Minimises the energy gain from the noise disturbance input to the performance output (z = C1_x @ x + C1_u * u, where C1_x and C1_u are customisable gains).
+- **H-infinity optimal control** - minimises the worst-case gain between disturbance and performance output across all frequencies.
+- **Model predictive control (MPC)** - forecasts the future states for a given control input trajectory and solves a constrained quadratic least-squares problem to minimise the error and control effort. The relative weights and constraints are customisable.
+- **Reinforcement learning (RL) control** - an 'actor' learns to map observed measurements to continuous control inputs (policy), and a 'critic' learns to evaluate their cost (value function), based on a reward signal that penalises large errors, large values of input and large changes input, both represented by neural networks. Three such actor-critic RL algorithms are available: deep deterministic policy gradient (DDPG), twin-delayed DDPG (TD3) and soft actor-critic (SAC). Neural net architecture and algorithm parameters are customisable within.
 
 ## Requirements
 
