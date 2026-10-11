@@ -1,6 +1,7 @@
 # Interactive Control System
 
-<video src="media/Recording%202026-10-11%20102742.mp4" controls width="100%"></video>
+<iframe width="100%" height="480" src="https://www.youtube.com/embed/qFyaboV8y_g" title="Interactive Control System demo" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
 
 ## Currently available controllers
 
