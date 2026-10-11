@@ -188,29 +188,6 @@ class BangBangController:
         return u
 
 
-class RLController:
-    """Run a trained continuous-action reinforcement-learning policy."""
-
-    def __init__(self):
-        self.agent = None
-
-    def set_agent(self, agent):
-        self.agent = agent
-
-    def calc_u(self, e: np.ndarray) -> np.ndarray:
-        if self.agent is None:
-            raise RuntimeError('Train or load an RL policy before selecting the RL controller.')
-        if not isinstance(e, np.ndarray) or e.shape != (1, 1):
-            raise ValueError('e must have shape (1, 1)')
-        action = self.agent.select_action(e.reshape(-1))
-        action = np.clip(
-            action,
-            self.agent.config.action_min,
-            self.agent.config.action_max,
-        )
-        return np.asarray(action, dtype=float).reshape(1, 1)
-
-
 class PIDController:
 
     # TODO: add anti-windup for integral term
@@ -860,6 +837,52 @@ class HInfinityController:
         return u_ss + u_deviation
 
 
+class KalmanFilter:
+    """Discrete-time Kalman filter implemented from first principles."""
+
+    def __init__(self, A, B, C, D, Q, R, initial_state=None, initial_covariance=None):
+        self.A = np.asarray(A, dtype=float)
+        self.B = np.asarray(B, dtype=float)
+        self.C = np.asarray(C, dtype=float)
+        self.D = np.asarray(D, dtype=float)
+        self.Q = np.asarray(Q, dtype=float)
+        self.R = np.asarray(R, dtype=float)
+        state_count = self.A.shape[0]
+        self._initial_state = np.zeros((state_count, 1)) if initial_state is None else np.asarray(initial_state, dtype=float).reshape(state_count, 1)
+        self._initial_covariance = np.eye(state_count) if initial_covariance is None else np.asarray(initial_covariance, dtype=float)
+        self.reset()
+
+    def reset(self):
+        """Reset state estimate and uncertainty to their initial values."""
+        self.x_hat = self._initial_state.copy()
+        self.P = self._initial_covariance.copy()
+        self._has_measurement = False
+
+    def update(self, measurement, previous_input):
+        """Predict with the previous input and correct using the current measurement."""
+        measurement = np.asarray(measurement, dtype=float).reshape(self.C.shape[0], 1)
+        previous_input = np.asarray(previous_input, dtype=float).reshape(self.B.shape[1], 1)
+
+        # Prediction is omitted on the first call because the initial state is
+        # already at the timestamp of the first measurement.
+        if self._has_measurement:
+            self.x_hat = self.A @ self.x_hat + self.B @ previous_input
+            self.P = self.A @ self.P @ self.A.T + self.Q
+        else:
+            self._has_measurement = True
+
+        innovation = measurement - self.C @ self.x_hat - self.D @ previous_input
+        innovation_covariance = self.C @ self.P @ self.C.T + self.R
+        kalman_gain = np.linalg.solve(innovation_covariance, self.C @ self.P).T
+        self.x_hat = self.x_hat + kalman_gain @ innovation
+
+        # Joseph-form covariance update maintains symmetry and non-negativity.
+        identity_minus_gain_C = np.eye(self.A.shape[0]) - kalman_gain @ self.C
+        self.P = identity_minus_gain_C @ self.P @ identity_minus_gain_C.T + kalman_gain @ self.R @ kalman_gain.T
+        self.P = 0.5 * (self.P + self.P.T)
+        return self.x_hat.copy()
+
+
 class ModelPredictiveController:
     """
     A model predictive controller (MPC) that computes the optimal control input by solving a quadratic program
@@ -1227,47 +1250,24 @@ class ModelPredictiveController:
         return u_ss + np.array([[result.x[delta_u_0_index]]])
 
 
-class KalmanFilter:
-    """Discrete-time Kalman filter implemented from first principles."""
+class RLController:
+    """Run a trained continuous-action reinforcement-learning policy."""
 
-    def __init__(self, A, B, C, D, Q, R, initial_state=None, initial_covariance=None):
-        self.A = np.asarray(A, dtype=float)
-        self.B = np.asarray(B, dtype=float)
-        self.C = np.asarray(C, dtype=float)
-        self.D = np.asarray(D, dtype=float)
-        self.Q = np.asarray(Q, dtype=float)
-        self.R = np.asarray(R, dtype=float)
-        state_count = self.A.shape[0]
-        self._initial_state = np.zeros((state_count, 1)) if initial_state is None else np.asarray(initial_state, dtype=float).reshape(state_count, 1)
-        self._initial_covariance = np.eye(state_count) if initial_covariance is None else np.asarray(initial_covariance, dtype=float)
-        self.reset()
+    def __init__(self):
+        self.agent = None
 
-    def reset(self):
-        """Reset state estimate and uncertainty to their initial values."""
-        self.x_hat = self._initial_state.copy()
-        self.P = self._initial_covariance.copy()
-        self._has_measurement = False
+    def set_agent(self, agent):
+        self.agent = agent
 
-    def update(self, measurement, previous_input):
-        """Predict with the previous input and correct using the current measurement."""
-        measurement = np.asarray(measurement, dtype=float).reshape(self.C.shape[0], 1)
-        previous_input = np.asarray(previous_input, dtype=float).reshape(self.B.shape[1], 1)
-
-        # Prediction is omitted on the first call because the initial state is
-        # already at the timestamp of the first measurement.
-        if self._has_measurement:
-            self.x_hat = self.A @ self.x_hat + self.B @ previous_input
-            self.P = self.A @ self.P @ self.A.T + self.Q
-        else:
-            self._has_measurement = True
-
-        innovation = measurement - self.C @ self.x_hat - self.D @ previous_input
-        innovation_covariance = self.C @ self.P @ self.C.T + self.R
-        kalman_gain = np.linalg.solve(innovation_covariance, self.C @ self.P).T
-        self.x_hat = self.x_hat + kalman_gain @ innovation
-
-        # Joseph-form covariance update maintains symmetry and non-negativity.
-        identity_minus_gain_C = np.eye(self.A.shape[0]) - kalman_gain @ self.C
-        self.P = identity_minus_gain_C @ self.P @ identity_minus_gain_C.T + kalman_gain @ self.R @ kalman_gain.T
-        self.P = 0.5 * (self.P + self.P.T)
-        return self.x_hat.copy()
+    def calc_u(self, e: np.ndarray) -> np.ndarray:
+        if self.agent is None:
+            raise RuntimeError('Train or load an RL policy before selecting the RL controller.')
+        if not isinstance(e, np.ndarray) or e.shape != (1, 1):
+            raise ValueError('e must have shape (1, 1)')
+        action = self.agent.select_action(e.reshape(-1))
+        action = np.clip(
+            action,
+            self.agent.config.action_min,
+            self.agent.config.action_max,
+        )
+        return np.asarray(action, dtype=float).reshape(1, 1)
