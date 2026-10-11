@@ -1,5 +1,6 @@
 # Interactive Control System
 
+<video src="media/Recording%202026-10-11%20102742.mp4" controls width="100%"></video>
 
 ## Currently available controllers
 
