@@ -7,6 +7,7 @@ import numpy as np
 from scipy.linalg import block_diag, expm
 from scipy import sparse
 from scipy.linalg import solve_continuous_are
+import osqp
 
 # local imports
 from integrators import IntegratorType
@@ -16,10 +17,7 @@ from utils import get_logger, EPS, get_t_span, GUI_SLIDER_CONFIG
 def discretise_state_space(A, B, integration_steps, method):
     """Discretise a continuous state-space model using the simulator's step method."""
     state_count = A.shape[0]
-    augmented_matrix = np.block([
-        [A, B],
-        [np.zeros((B.shape[1], state_count + B.shape[1]))],
-    ])
+    augmented_matrix = np.block([[A, B], [np.zeros((B.shape[1], state_count + B.shape[1]))]])
     identity = np.eye(augmented_matrix.shape[0])
     augmented_step = identity.copy()
 
@@ -48,9 +46,7 @@ def discretise_process_noise(A, Q, integration_steps, method, use_ode_mode):
     """Discretise process-noise covariance for the simulator's ODE or SDE semantics."""
     state_count = A.shape[0]
     if use_ode_mode:
-        _, noise_gain = discretise_state_space(
-            A, np.eye(state_count), integration_steps, method
-        )
+        _, noise_gain = discretise_state_space(A, np.eye(state_count), integration_steps, method)
         return noise_gain @ Q @ noise_gain.T
 
     if method is IntegratorType.ANALYTIC_SDE:
@@ -702,7 +698,7 @@ class HInfinityController:
         def design_at_gamma(gamma):
             try:
                 # The indefinite CARE preserves rank-deficient disturbance and
-                # control matrices, unlike Cholesky factorization of their difference.
+                # control matrices, unlike Cholesky factorisation of their difference.
                 B1_B = np.hstack([B1, B])
                 control_riccati_weights = block_diag(-gamma ** 2 * np.eye(B1.shape[1]), input_cost * np.eye(B.shape[1]))
                 X = solve_continuous_are(A, B1_B, state_cost, control_riccati_weights)
@@ -750,7 +746,7 @@ class HInfinityController:
         if design_key == self._design_key:
             return
         if not np.allclose(D, 0.0):
-            raise ValueError('H-infinity synthesis currently requires D=0, matching the generalized plant used by the CARE/FARE formulas.')
+            raise ValueError('H-infinity synthesis currently requires D=0, matching the generalised plant used by the CARE/FARE formulas.')
         is_stabilisable, is_detectable = self.check_stabilisability_and_detectability()
         if not is_stabilisable or not is_detectable:
             raise ValueError('H-infinity synthesis requires a stabilisable and detectable plant. '
@@ -1206,7 +1202,7 @@ class ModelPredictiveController:
             inequality_values.append(float(bound))
 
         # Initial condition and dynamics are equalities; user constraints are
-        # upper-bounded inequalities. Stack both for OSQP's l <= A z <= u form.
+        # upper-bounded inequalities. Stack both for OSQP's lower <= A @ z <= upper form.
         constraint_rows = equality_rows + inequality_rows
         lower = equality_values + [-np.inf] * len(inequality_rows)
         upper = equality_values + inequality_values
@@ -1215,7 +1211,7 @@ class ModelPredictiveController:
             np.asarray(lower, dtype=float), np.asarray(upper, dtype=float), input_index(0))
 
     def calc_u(self, e: np.ndarray) -> np.ndarray:
-        """Execute the five MPC stages and return the first optimized input."""
+        """Execute the five MPC stages and return the first optimised input."""
         if not isinstance(e, np.ndarray) or e.shape != (1, 1):
             raise ValueError('e must have shape (1, 1)')
 
@@ -1224,7 +1220,7 @@ class ModelPredictiveController:
         horizon = int(getattr(self.simulator, 'MPC_N', 5))
         self.ensure_horizon(horizon)
 
-        # step 2: reuse the shared state-space discretization for this frame.
+        # step 2: reuse the shared state-space discretisation for this frame.
         self.update_discrete_model()
 
         # step 3: estimate the state from the previous input and current reading.
@@ -1233,13 +1229,9 @@ class ModelPredictiveController:
         delta_x_0 = x_hat_0 - x_ss
 
         # step 4: assemble the single sparse quadratic program.
-        P, q, A_qp, lower, upper, delta_u_0_index = self._assemble_qp(
-            delta_x_0, x_ss, u_ss, horizon
-        )
+        P, q, A_qp, lower, upper, delta_u_0_index = self._assemble_qp(delta_x_0, x_ss, u_ss, horizon)
 
         # step 5: solve the QP, then apply only its first control move.
-        import osqp
-
         solver = osqp.OSQP()
         solver.setup(P=P, q=q, A=A_qp, l=lower, u=upper,
             verbose=False, eps_abs=EPS, eps_rel=EPS, max_iter=20000, polishing=True)

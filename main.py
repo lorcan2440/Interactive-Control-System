@@ -8,8 +8,7 @@ from time import perf_counter
 
 # external imports
 import numpy as np
-# Load Torch before Qt on Windows, where Qt's DLLs can prevent c10.dll from initializing.
-import_module('torch')
+import torch  # must load torch before Qt on Windows: Qt's DLLs can prevent c10.dll from initializing
 from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtCore import QTimer
 
